@@ -1,6 +1,19 @@
 const express = require('express');
+const crypto = require('crypto');
 const pool = require('../db/pool');
 const { authenticate, authorize } = require('../middleware/auth');
+
+function verifySignature(signature, rawBody, secret) {
+  if (!signature || !secret) return false;
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+  const sigBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (sigBuffer.length !== expectedBuffer.length) return false;
+  return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
+}
 
 const router = express.Router();
 
@@ -75,13 +88,13 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 // ── POST /api/payments/webhook — Snippe webhook handler ───
 router.post('/webhook', async (req, res, next) => {
   try {
-    // TODO: Verify Snippe webhook signature using SNIPPE_WEBHOOK_SECRET
-    // const signature = req.headers['x-snippe-signature'];
-    // if (!verifySignature(signature, req.body, process.env.SNIPPE_WEBHOOK_SECRET)) {
-    //   return res.status(401).json({ message: 'Invalid signature' });
-    // }
+    const signature = req.headers['x-snippe-signature'];
+    if (!verifySignature(signature, req.body, process.env.SNIPPE_WEBHOOK_SECRET)) {
+      return res.status(401).json({ message: 'Invalid signature' });
+    }
 
-    const { event, data } = req.body;
+    const payload = JSON.parse(req.body);
+    const { event, data } = payload;
 
     console.log(`📨 Snippe webhook: ${event}`, data);
 
