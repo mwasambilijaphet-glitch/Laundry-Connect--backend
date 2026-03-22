@@ -10,6 +10,7 @@ const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
 const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
+const messageRoutes = require('./routes/messages');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -96,6 +97,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/owner', ownerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/messages', messageRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
