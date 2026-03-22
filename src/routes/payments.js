@@ -16,10 +16,11 @@ function verifyWebhookSignature(payload, signature, secret) {
     .createHmac('sha256', secret)
     .update(JSON.stringify(payload))
     .digest('hex');
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, 'utf8'),
-    Buffer.from(expected, 'utf8')
-  );
+  // SECURITY FIX: timingSafeEqual crashes if buffers differ in length
+  const sigBuf = Buffer.from(signature, 'utf8');
+  const expBuf = Buffer.from(expected, 'utf8');
+  if (sigBuf.length !== expBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
 /**
@@ -146,13 +147,17 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 // ── POST /api/payments/webhook — Snippe webhook handler ───
 router.post('/webhook', async (req, res, next) => {
   try {
-    // Verify webhook signature
+    // Verify webhook signature (SECURITY: reject if secret is set but signature missing/invalid)
     const signature = req.headers['x-snippe-signature'];
     const webhookSecret = process.env.SNIPPE_WEBHOOK_SECRET;
 
-    if (webhookSecret && signature) {
+    if (webhookSecret) {
+      if (!signature) {
+        console.error('Webhook rejected: missing signature header');
+        return res.status(401).json({ message: 'Missing signature' });
+      }
       if (!verifyWebhookSignature(req.body, signature, webhookSecret)) {
-        console.error('Webhook signature verification failed');
+        console.error('Webhook rejected: invalid signature');
         return res.status(401).json({ message: 'Invalid signature' });
       }
     }
