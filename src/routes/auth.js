@@ -569,9 +569,9 @@ router.post('/reset-password', async (req, res, next) => {
     // Mark OTP as used
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [otpResult.rows[0].id]);
 
-    // Update password
+    // Update password and auto-verify (user proved email ownership via OTP)
     const password_hash = await bcrypt.hash(new_password, 12);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2', [password_hash, email]);
+    await pool.query('UPDATE users SET password_hash = $1, is_verified = TRUE WHERE LOWER(email) = $2', [password_hash, email]);
 
     res.json({
       success: true,
