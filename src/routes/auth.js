@@ -120,23 +120,69 @@ function clearLoginAttempts(ip, identifier) {
   loginAttempts.delete(getAttemptKey(ip, identifier));
 }
 
+// ── Email branding ───────────────────────────────────────
+const EMAIL_FROM = `"Laundry Connect" <${process.env.SMTP_USER}>`;
+
+function emailWrapper(content) {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Roboto,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.06);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#2563EB 0%,#1d4ed8 100%);padding:28px 32px;text-align:center;">
+            <h1 style="margin:0;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">
+              Laundry<span style="color:#86efac;">Connect</span>
+            </h1>
+            <p style="margin:6px 0 0;font-size:12px;color:#bfdbfe;letter-spacing:1px;text-transform:uppercase;">Smart Laundry Service</p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px;">
+            ${content}
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:20px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#94a3b8;">
+              Laundry Connect &mdash; Huduma bora ya dobi karibu nawe
+            </p>
+            <p style="margin:6px 0 0;font-size:11px;color:#cbd5e1;">
+              Dar es Salaam, Tanzania &bull; laundryconnect.co.tz
+            </p>
+            <p style="margin:8px 0 0;font-size:11px;color:#cbd5e1;">
+              This is an automated message. Please do not reply to this email.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 // ── Email senders ────────────────────────────────────────
 async function sendOTPEmail(email, otp) {
   try {
     const info = await transporter.sendMail({
-      from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
+      from: EMAIL_FROM,
       to: email,
-      subject: 'Your Laundry Connect Verification Code',
-      html: `
-        <div style="font-family: sans-serif; max-width: 400px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #2563EB;">Laundry Connect</h2>
-          <p>Karibu! Your verification code is:</p>
-          <div style="background: #f1f5f9; padding: 20px; text-align: center; border-radius: 12px; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">${otp}</span>
-          </div>
-          <p style="color: #64748b; font-size: 14px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+      subject: 'Laundry Connect - Verification Code',
+      html: emailWrapper(`
+        <p style="color:#334155;font-size:15px;margin:0 0 8px;">Karibu! <strong>Laundry Connect</strong></p>
+        <p style="color:#475569;font-size:14px;margin:0 0 24px;">Use the code below to verify your account:</p>
+        <div style="background:#f0f9ff;border:2px dashed #2563EB;padding:24px;text-align:center;border-radius:12px;margin:0 0 24px;">
+          <span style="font-size:36px;font-weight:800;letter-spacing:10px;color:#1e293b;">${otp}</span>
         </div>
-      `,
+        <p style="color:#64748b;font-size:13px;margin:0;">This code expires in <strong>10 minutes</strong>. If you didn't request this, you can safely ignore this email.</p>
+      `),
     });
     console.log('OTP email sent to:', email, '| MessageID:', info.messageId);
     return true;
@@ -151,29 +197,25 @@ async function sendPasswordResetEmail(email, otp) {
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
     await transporter.sendMail({
-      from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
+      from: EMAIL_FROM,
       to: email,
-      subject: 'Reset Your Laundry Connect Password',
-      html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 30px 20px;">
-          <div style="text-align: center; margin-bottom: 24px;">
-            <h2 style="color: #2563EB; margin: 0;">Laundry<span style="color: #22c55e;">Connect</span></h2>
-          </div>
-          <p style="color: #334155; font-size: 15px;">Habari! You requested a password reset for your account.</p>
-          <p style="color: #334155; font-size: 15px;">Click the button below to set a new password:</p>
-          <div style="text-align: center; margin: 28px 0;">
-            <a href="${resetLink}" style="display: inline-block; background: #2563EB; color: #ffffff; padding: 14px 36px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px;">
-              Reset Password
-            </a>
-          </div>
-          <p style="color: #64748b; font-size: 13px;">Or copy this link into your browser:</p>
-          <p style="color: #2563EB; font-size: 13px; word-break: break-all;">${resetLink}</p>
-          <div style="background: #fef3c7; padding: 14px; border-radius: 10px; margin: 20px 0;">
-            <p style="color: #92400e; font-size: 13px; margin: 0;">Your reset code is: <strong style="letter-spacing: 4px; font-size: 18px;">${otp}</strong></p>
-          </div>
-          <p style="color: #94a3b8; font-size: 12px;">This link expires in 10 minutes. If you didn't request this, your account is safe — just ignore this email.</p>
+      subject: 'Laundry Connect - Password Reset',
+      html: emailWrapper(`
+        <p style="color:#334155;font-size:15px;margin:0 0 8px;">Habari!</p>
+        <p style="color:#475569;font-size:14px;margin:0 0 24px;">You requested a password reset for your <strong>Laundry Connect</strong> account. Click the button below to set a new password:</p>
+        <div style="text-align:center;margin:0 0 24px;">
+          <a href="${resetLink}" style="display:inline-block;background:#2563EB;color:#ffffff;padding:14px 40px;border-radius:12px;text-decoration:none;font-weight:700;font-size:16px;">
+            Reset Password
+          </a>
         </div>
-      `,
+        <p style="color:#64748b;font-size:13px;margin:0 0 8px;">Or copy this link into your browser:</p>
+        <p style="color:#2563EB;font-size:12px;word-break:break-all;background:#f0f9ff;padding:10px 14px;border-radius:8px;margin:0 0 20px;">${resetLink}</p>
+        <div style="background:#fef3c7;padding:16px;border-radius:10px;margin:0 0 20px;text-align:center;">
+          <p style="color:#92400e;font-size:13px;margin:0 0 4px;">Your reset code:</p>
+          <span style="font-size:28px;font-weight:800;letter-spacing:6px;color:#92400e;">${otp}</span>
+        </div>
+        <p style="color:#94a3b8;font-size:12px;margin:0;">This link expires in <strong>10 minutes</strong>. If you didn't request this, your account is safe &mdash; just ignore this email.</p>
+      `),
     });
     console.log('Password reset email sent to:', email);
     return true;
