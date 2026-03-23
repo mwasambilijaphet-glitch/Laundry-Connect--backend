@@ -122,4 +122,142 @@ router.get('/orders', async (req, res, next) => {
     next(err);
   }
 });
+// ── GET /api/owner/commission — View pending commission owed ──
+router.get('/commission', async (req, res, next) => {
+  try {
+    const shopResult = await pool.query('SELECT id FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.json({ success: true, commission: { total_owed: 0, orders: [] } });
+    }
+    const shopId = shopResult.rows[0].id;
+
+    // Get all cash orders with pending commission
+    const result = await pool.query(
+      `SELECT o.id, o.order_number, o.total_amount, o.platform_commission, o.created_at,
+              o.payment_status, o.status,
+              t.id as commission_tx_id, t.status as commission_status
+       FROM orders o
+       LEFT JOIN transactions t ON t.order_id = o.id AND t.type = 'commission'
+       WHERE o.shop_id = $1 AND o.payment_status = 'cash' AND t.status = 'pending'
+       ORDER BY o.created_at DESC`,
+      [shopId]
+    );
+
+    const totalOwed = result.rows.reduce((sum, r) => sum + parseInt(r.platform_commission), 0);
+
+    res.json({
+      success: true,
+      commission: {
+        total_owed: totalOwed,
+        orders: result.rows,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/owner/commission/settle — Pay commission via M-Pesa ──
+router.post('/commission/settle', async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+
+    const shopResult = await pool.query('SELECT id, name FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Shop not found' });
+    }
+    const shop = shopResult.rows[0];
+
+    // Calculate total pending commission for cash orders
+    const pendingResult = await pool.query(
+      `SELECT t.id, t.amount, t.order_id
+       FROM transactions t
+       JOIN orders o ON t.order_id = o.id
+       WHERE o.shop_id = $1 AND t.type = 'commission' AND t.status = 'pending' AND o.payment_status = 'cash'`,
+      [shop.id]
+    );
+
+    if (pendingResult.rows.length === 0) {
+      return res.json({ success: true, message: 'No pending commission to settle' });
+    }
+
+    const totalOwed = pendingResult.rows.reduce((sum, r) => sum + parseInt(r.amount), 0);
+    const txIds = pendingResult.rows.map(r => r.id);
+
+    if (process.env.SNIPPE_API_KEY) {
+      // Initiate collection from shop owner via Snippe
+      const userResult = await pool.query('SELECT full_name, email FROM users WHERE id = $1', [req.user.id]);
+      const user = userResult.rows[0];
+
+      const snippeResponse = await fetch('https://api.snippe.sh/v1/payments', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.SNIPPE_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `commission-${shop.id}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          amount: totalOwed,
+          currency: 'TZS',
+          phone: phone || undefined,
+          method: 'mobile_money',
+          customer: {
+            name: user.full_name,
+            email: user.email,
+          },
+          webhook_url: `${process.env.BACKEND_URL}/api/payments/commission-webhook`,
+          metadata: {
+            type: 'commission_settlement',
+            shop_id: shop.id,
+            transaction_ids: txIds,
+          },
+          description: `Commission settlement for ${shop.name}`,
+        }),
+      });
+
+      const snippeData = await snippeResponse.json();
+
+      if (!snippeResponse.ok) {
+        console.error('Snippe commission error:', snippeData);
+        return res.status(502).json({
+          success: false,
+          message: snippeData.message || 'Payment gateway error. Please try again.',
+        });
+      }
+
+      console.log('Commission settlement initiated:', snippeData.id, '| Amount:', totalOwed, 'TZS');
+
+      res.json({
+        success: true,
+        message: 'Commission payment initiated. Check your phone for the USSD prompt.',
+        settlement: {
+          reference: snippeData.id,
+          amount: totalOwed,
+          orders_count: pendingResult.rows.length,
+        },
+      });
+    } else {
+      // Test mode — mark as settled immediately
+      await pool.query(
+        `UPDATE transactions SET status = 'completed' WHERE id = ANY($1)`,
+        [txIds]
+      );
+
+      console.log('Commission settled (test mode) for shop:', shop.name, '| Amount:', totalOwed, 'TZS');
+
+      res.json({
+        success: true,
+        message: `Commission of ${totalOwed} TZS settled successfully (test mode).`,
+        settlement: {
+          reference: `commission_test_${Date.now()}`,
+          amount: totalOwed,
+          orders_count: pendingResult.rows.length,
+        },
+      });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

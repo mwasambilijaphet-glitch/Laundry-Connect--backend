@@ -14,11 +14,16 @@ async function seed() {
     console.log('🌱 Seeding database...');
 
     // ── Admin user ──────────────────────────────────────
-    const adminHash = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123456', 10);
+    const adminHash = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123456', 12);
     const adminResult = await pool.query(
       `INSERT INTO users (phone, email, password_hash, full_name, role, is_verified)
        VALUES ($1, $2, $3, $4, 'admin', TRUE)
-       ON CONFLICT (email) DO NOTHING
+       ON CONFLICT (email) DO UPDATE SET
+         password_hash = EXCLUDED.password_hash,
+         phone = EXCLUDED.phone,
+         full_name = EXCLUDED.full_name,
+         role = 'admin',
+         is_verified = TRUE
        RETURNING id`,
       [process.env.ADMIN_PHONE || '0712345678', process.env.ADMIN_EMAIL || 'admin@laundryconnect.co.tz', adminHash, 'Japhet Admin']
     );
@@ -68,9 +73,16 @@ async function seed() {
 
     const shopIds = [];
     for (const shop of shops) {
+      // Skip if owner not created (already existed)
+      if (!ownerIds[shop.owner_idx]) {
+        // Find existing shop by name + phone
+        const existing = await pool.query('SELECT id FROM shops WHERE phone = $1', [shop.phone]);
+        if (existing.rows[0]) { shopIds.push(existing.rows[0].id); continue; }
+      }
       const res = await pool.query(
         `INSERT INTO shops (owner_id, name, description, address, latitude, longitude, region, phone, is_approved, rating_avg, total_orders, total_reviews)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, $10, $11)
+         ON CONFLICT DO NOTHING
          RETURNING id`,
         [ownerIds[shop.owner_idx], shop.name, shop.desc, shop.address, shop.lat, shop.lng, shop.region, shop.phone,
          [4.7, 4.9, 4.4, 4.8, 4.5][shop.owner_idx],
@@ -113,8 +125,10 @@ async function seed() {
     ];
 
     for (const [shopIdx, clothing, service, price] of svcData) {
+      if (!shopIds[shopIdx]) continue;
       await pool.query(
-        `INSERT INTO services (shop_id, clothing_type, service_type, price) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO services (shop_id, clothing_type, service_type, price) VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
         [shopIds[shopIdx], clothing, service, price]
       );
     }
@@ -130,8 +144,10 @@ async function seed() {
     ];
 
     for (const [shopIdx, zoneName, fee, desc] of zones) {
+      if (!shopIds[shopIdx]) continue;
       await pool.query(
-        `INSERT INTO delivery_zones (shop_id, zone_name, fee, description) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO delivery_zones (shop_id, zone_name, fee, description) VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
         [shopIds[shopIdx], zoneName, fee, desc]
       );
     }
@@ -139,7 +155,7 @@ async function seed() {
 
     console.log('\n🎉 Seed complete! Your database is ready.\n');
     console.log('   Test credentials:');
-    console.log('   Admin:    admin@laundryconnect.co.tz / admin123456');
+    console.log(`   Admin:    ${process.env.ADMIN_PHONE || '0712345678'} / ${process.env.ADMIN_PASSWORD ? '(from .env)' : 'admin123456'}`);
     console.log('   Owner:    salma@example.com / owner123456');
     console.log('   Customer: customer@example.com / customer123\n');
 

@@ -108,7 +108,8 @@ CREATE TABLE orders (
   delivery_latitude   DECIMAL(10, 7),
   delivery_longitude  DECIMAL(10, 7),
   special_instructions TEXT,
-  payment_status      VARCHAR(20) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'failed', 'refunded')),
+  payment_status      VARCHAR(20) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'failed', 'refunded', 'cash')),
+  payment_method      VARCHAR(20) DEFAULT NULL,
   payment_reference   VARCHAR(255),
   created_at          TIMESTAMP DEFAULT NOW(),
   updated_at          TIMESTAMP DEFAULT NOW()

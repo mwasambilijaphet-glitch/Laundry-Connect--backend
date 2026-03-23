@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
@@ -8,7 +9,7 @@ const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../servic
 
 const router = express.Router();
 
-// ── Email transporter (used for password reset) ──────────
+// ── Email transporter (used for OTP & password reset) ────
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: parseInt(process.env.SMTP_PORT || '587'),
@@ -28,13 +29,15 @@ transporter.verify((error) => {
   }
 });
 
+// ── Cryptographically secure OTP ─────────────────────────
 function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  // Use crypto.randomInt instead of Math.random (SECURITY FIX)
+  return crypto.randomInt(100000, 999999).toString();
 }
 
 function generateToken(user) {
   return jwt.sign(
-    { id: user.id, role: user.role, email: user.email },
+    { id: user.id, role: user.role },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
   );
@@ -48,6 +51,76 @@ function generateRefreshToken(user) {
   );
 }
 
+// ── Input validators ─────────────────────────────────────
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
+}
+
+function isValidPhone(phone) {
+  const cleaned = phone.replace(/[\s\-()]/g, '');
+  return /^(\+?255|0)\d{9}$/.test(cleaned);
+}
+
+function isStrongPassword(password) {
+  // Min 8 chars, at least 1 uppercase, 1 lowercase, 1 number
+  return password.length >= 8 &&
+    /[A-Z]/.test(password) &&
+    /[a-z]/.test(password) &&
+    /\d/.test(password);
+}
+
+function sanitizeString(str, maxLen = 200) {
+  if (typeof str !== 'string') return '';
+  return str.trim().substring(0, maxLen);
+}
+
+// ── Login attempt tracking (in-memory, per IP+email) ─────
+const loginAttempts = new Map();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+
+function getAttemptKey(ip, identifier) {
+  return `${ip}:${identifier}`;
+}
+
+function checkLoginLockout(ip, identifier) {
+  const key = getAttemptKey(ip, identifier);
+  const record = loginAttempts.get(key);
+  if (!record) return { locked: false };
+
+  if (record.lockedUntil && Date.now() < record.lockedUntil) {
+    const remainingMs = record.lockedUntil - Date.now();
+    const remainingMin = Math.ceil(remainingMs / 60000);
+    return { locked: true, remainingMin };
+  }
+
+  // Reset if lockout expired
+  if (record.lockedUntil && Date.now() >= record.lockedUntil) {
+    loginAttempts.delete(key);
+    return { locked: false };
+  }
+
+  return { locked: false };
+}
+
+function recordFailedLogin(ip, identifier) {
+  const key = getAttemptKey(ip, identifier);
+  const record = loginAttempts.get(key) || { count: 0 };
+  record.count++;
+  record.lastAttempt = Date.now();
+
+  if (record.count >= MAX_LOGIN_ATTEMPTS) {
+    record.lockedUntil = Date.now() + LOCKOUT_DURATION;
+  }
+
+  loginAttempts.set(key, record);
+}
+
+function clearLoginAttempts(ip, identifier) {
+  loginAttempts.delete(getAttemptKey(ip, identifier));
+}
+
+// ── Email senders ────────────────────────────────────────
 async function sendOTPEmail(email, otp) {
   try {
     const info = await transporter.sendMail({
@@ -74,7 +147,8 @@ async function sendOTPEmail(email, otp) {
 }
 
 async function sendPasswordResetEmail(email, otp) {
-  const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
     await transporter.sendMail({
       from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
@@ -101,6 +175,7 @@ async function sendPasswordResetEmail(email, otp) {
         </div>
       `,
     });
+    console.log('Password reset email sent to:', email);
     return true;
   } catch (err) {
     console.error('Failed to send reset email:', err.message);
@@ -111,24 +186,45 @@ async function sendPasswordResetEmail(email, otp) {
 // ── POST /api/auth/register ───────────────────────────────
 router.post('/register', async (req, res, next) => {
   try {
-    const { full_name, phone, email, password, role, otp_channel } = req.body;
+    const full_name = sanitizeString(req.body.full_name, 100);
+    const phone = sanitizeString(req.body.phone, 20);
+    const email = sanitizeString(req.body.email, 254).toLowerCase();
+    const password = req.body.password || '';
+    const role = req.body.role;
+    const otp_channel = req.body.otp_channel;
 
     if (!full_name || !phone || !email || !password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Invalid email address' });
+    }
+
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ success: false, message: 'Invalid Tanzanian phone number (e.g. 0768188065)' });
+    }
+
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
+      });
+    }
+
     if (!['customer', 'owner'].includes(role)) {
       return res.status(400).json({ success: false, message: 'Invalid role' });
     }
 
     const existing = await pool.query(
-      'SELECT id FROM users WHERE email = $1 OR phone = $2',
+      'SELECT id FROM users WHERE LOWER(email) = $1 OR phone = $2',
       [email, phone]
     );
     if (existing.rows.length > 0) {
       return res.status(409).json({ success: false, message: 'Email or phone already registered' });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
+    const password_hash = await bcrypt.hash(password, 12); // 12 rounds (SECURITY: upgraded from 10)
 
     const result = await pool.query(
       `INSERT INTO users (full_name, phone, email, password_hash, role, is_verified)
@@ -145,7 +241,7 @@ router.post('/register', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send OTP via chosen channel (default: sms via briq.tz)
+    // Send OTP via chosen channel
     let otpSent = false;
     const channel = otp_channel || 'sms';
 
@@ -153,7 +249,6 @@ router.post('/register', async (req, res, next) => {
       const waResult = await sendWhatsAppOTP(phone, otp);
       otpSent = waResult.success;
       if (!otpSent) {
-        // Fallback to SMS if WhatsApp fails
         const smsResult = await sendSMSOTP(phone, otp);
         otpSent = smsResult.success;
       }
@@ -187,7 +282,12 @@ router.post('/register', async (req, res, next) => {
 // ── POST /api/auth/verify-otp ─────────────────────────────
 router.post('/verify-otp', async (req, res, next) => {
   try {
-    const { email, otp_code } = req.body;
+    const email = sanitizeString(req.body.email, 254).toLowerCase();
+    const otp_code = sanitizeString(req.body.otp_code, 6);
+
+    if (!email || !otp_code || otp_code.length !== 6 || !/^\d{6}$/.test(otp_code)) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP format' });
+    }
 
     const result = await pool.query(
       `SELECT * FROM otp_codes
@@ -203,7 +303,7 @@ router.post('/verify-otp', async (req, res, next) => {
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [result.rows[0].id]);
 
     const userResult = await pool.query(
-      'UPDATE users SET is_verified = TRUE WHERE email = $1 RETURNING id, full_name, phone, email, role',
+      'UPDATE users SET is_verified = TRUE WHERE LOWER(email) = $1 RETURNING id, full_name, phone, email, role',
       [email]
     );
 
@@ -230,15 +330,17 @@ router.post('/verify-otp', async (req, res, next) => {
 // ── POST /api/auth/resend-otp ─────────────────────────────
 router.post('/resend-otp', async (req, res, next) => {
   try {
-    const { email, otp_channel } = req.body;
+    const email = sanitizeString(req.body.email, 254).toLowerCase();
+    const otp_channel = req.body.otp_channel;
 
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
-    const userResult = await pool.query('SELECT id, phone FROM users WHERE email = $1', [email]);
+    const userResult = await pool.query('SELECT id, phone FROM users WHERE LOWER(email) = $1', [email]);
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      // Don't reveal if user exists (SECURITY)
+      return res.json({ success: true, message: 'If the account exists, a new OTP has been sent' });
     }
 
     // Invalidate old OTPs
@@ -284,18 +386,29 @@ router.post('/resend-otp', async (req, res, next) => {
 // ── POST /api/auth/login ──────────────────────────────────
 router.post('/login', async (req, res, next) => {
   try {
-    const { phone, password } = req.body;
+    const phone = sanitizeString(req.body.phone, 254);
+    const password = req.body.password || '';
 
     if (!phone || !password) {
       return res.status(400).json({ success: false, message: 'Phone and password are required' });
     }
 
+    // Check lockout
+    const lockout = checkLoginLockout(req.ip, phone);
+    if (lockout.locked) {
+      return res.status(429).json({
+        success: false,
+        message: `Account temporarily locked. Try again in ${lockout.remainingMin} minutes.`,
+      });
+    }
+
     const result = await pool.query(
-      'SELECT * FROM users WHERE phone = $1 OR email = $1',
+      'SELECT * FROM users WHERE phone = $1 OR LOWER(email) = LOWER($1)',
       [phone]
     );
 
     if (result.rows.length === 0) {
+      recordFailedLogin(req.ip, phone);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
@@ -303,12 +416,16 @@ router.post('/login', async (req, res, next) => {
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!validPassword) {
+      recordFailedLogin(req.ip, phone);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
     if (!user.is_verified) {
       return res.status(403).json({ success: false, message: 'Please verify your account first' });
     }
+
+    // Clear failed attempts on success
+    clearLoginAttempts(req.ip, phone);
 
     const token = generateToken(user);
     const refreshToken = generateRefreshToken(user);
@@ -332,19 +449,18 @@ router.post('/login', async (req, res, next) => {
 });
 
 // ── POST /api/auth/forgot-password ────────────────────────
-// Password reset is sent via EMAIL automatically
 router.post('/forgot-password', async (req, res, next) => {
   try {
-    const { email } = req.body;
+    const email = sanitizeString(req.body.email, 254).toLowerCase();
 
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Valid email is required' });
     }
 
-    const userResult = await pool.query('SELECT id, email, phone FROM users WHERE email = $1', [email]);
+    const userResult = await pool.query('SELECT id, email, phone FROM users WHERE LOWER(email) = $1', [email]);
     if (userResult.rows.length === 0) {
-      // Don't reveal if email exists or not
-      return res.json({ success: true, message: 'If this email exists, a reset code has been sent' });
+      // Don't reveal if email exists (SECURITY)
+      return res.json({ success: true, message: 'If this email exists, a reset link has been sent' });
     }
 
     // Invalidate old OTPs
@@ -358,10 +474,10 @@ router.post('/forgot-password', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send password reset via EMAIL automatically
+    // Send password reset link via EMAIL automatically
     const emailSent = await sendPasswordResetEmail(email, otp);
 
-    // Also send via SMS as backup
+    // Also send OTP via SMS as backup
     const phone = userResult.rows[0].phone;
     if (phone) {
       await sendPasswordResetSMS(phone, otp);
@@ -370,8 +486,8 @@ router.post('/forgot-password', async (req, res, next) => {
     res.json({
       success: true,
       message: emailSent
-        ? 'Password reset code sent to your email'
-        : 'If this email exists, a reset code has been sent',
+        ? 'Password reset link sent to your email'
+        : 'If this email exists, a reset link has been sent',
     });
   } catch (err) {
     next(err);
@@ -381,14 +497,19 @@ router.post('/forgot-password', async (req, res, next) => {
 // ── POST /api/auth/reset-password ─────────────────────────
 router.post('/reset-password', async (req, res, next) => {
   try {
-    const { email, otp_code, new_password } = req.body;
+    const email = sanitizeString(req.body.email, 254).toLowerCase();
+    const otp_code = sanitizeString(req.body.otp_code, 6);
+    const new_password = req.body.new_password || '';
 
     if (!email || !otp_code || !new_password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
-    if (new_password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    if (!isStrongPassword(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
+      });
     }
 
     // Verify OTP
@@ -407,8 +528,8 @@ router.post('/reset-password', async (req, res, next) => {
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [otpResult.rows[0].id]);
 
     // Update password
-    const password_hash = await bcrypt.hash(new_password, 10);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [password_hash, email]);
+    const password_hash = await bcrypt.hash(new_password, 12);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2', [password_hash, email]);
 
     res.json({
       success: true,

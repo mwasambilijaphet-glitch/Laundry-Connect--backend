@@ -16,10 +16,11 @@ function verifyWebhookSignature(payload, signature, secret) {
     .createHmac('sha256', secret)
     .update(JSON.stringify(payload))
     .digest('hex');
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, 'utf8'),
-    Buffer.from(expected, 'utf8')
-  );
+  // SECURITY FIX: timingSafeEqual crashes if buffers differ in length
+  const sigBuf = Buffer.from(signature, 'utf8');
+  const expBuf = Buffer.from(expected, 'utf8');
+  if (sigBuf.length !== expBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
 /**
@@ -46,7 +47,7 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
       return res.status(400).json({ success: false, message: 'order_id and method are required' });
     }
 
-    const validMethods = ['mobile_money', 'mpesa', 'airtel', 'tigo', 'card', 'qr'];
+    const validMethods = ['mobile_money', 'mpesa', 'airtel', 'tigo', 'card', 'qr', 'cash'];
     if (!validMethods.includes(method)) {
       return res.status(400).json({ success: false, message: 'Invalid payment method' });
     }
@@ -60,6 +61,42 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
       return res.status(404).json({ success: false, message: 'Order not found or already paid' });
     }
     const order = orderResult.rows[0];
+
+    // ── Cash payment — skip gateway, mark as cash ─────────
+    if (method === 'cash') {
+      await pool.query(
+        `UPDATE orders SET payment_status = 'cash', payment_method = 'cash', status = 'confirmed', updated_at = NOW()
+         WHERE id = $1`,
+        [order.id]
+      );
+
+      // Record transaction with pending commission
+      await pool.query(
+        `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
+         VALUES ($1, 'payment', $2, 'cash', $3)`,
+        [order.id, order.total_amount, `cash_${order.id}_${Date.now()}`]
+      );
+
+      // Record pending commission the owner owes
+      await pool.query(
+        `INSERT INTO transactions (order_id, type, amount, status)
+         VALUES ($1, 'commission', $2, 'pending')`,
+        [order.id, order.platform_commission]
+      );
+
+      console.log('Cash payment recorded for order:', order.order_number, '| Commission owed:', order.platform_commission, 'TZS');
+
+      return res.json({
+        success: true,
+        message: 'Order confirmed. Customer will pay cash on delivery.',
+        payment: {
+          reference: `cash_${order.id}`,
+          amount: order.total_amount,
+          method: 'cash',
+          commission_owed: order.platform_commission,
+        },
+      });
+    }
 
     // Get user details for Snippe
     const userResult = await pool.query('SELECT full_name, email FROM users WHERE id = $1', [req.user.id]);
@@ -146,13 +183,17 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 // ── POST /api/payments/webhook — Snippe webhook handler ───
 router.post('/webhook', async (req, res, next) => {
   try {
-    // Verify webhook signature
+    // Verify webhook signature (SECURITY: reject if secret is set but signature missing/invalid)
     const signature = req.headers['x-snippe-signature'];
     const webhookSecret = process.env.SNIPPE_WEBHOOK_SECRET;
 
-    if (webhookSecret && signature) {
+    if (webhookSecret) {
+      if (!signature) {
+        console.error('Webhook rejected: missing signature header');
+        return res.status(401).json({ message: 'Missing signature' });
+      }
       if (!verifyWebhookSignature(req.body, signature, webhookSecret)) {
-        console.error('Webhook signature verification failed');
+        console.error('Webhook rejected: invalid signature');
         return res.status(401).json({ message: 'Invalid signature' });
       }
     }
@@ -218,6 +259,38 @@ router.post('/webhook', async (req, res, next) => {
   } catch (err) {
     console.error('Webhook error:', err.message);
     res.status(200).json({ received: true }); // Still respond 200 to prevent retries
+  }
+});
+
+// ── POST /api/payments/commission-webhook — Commission settlement webhook ─
+router.post('/commission-webhook', async (req, res) => {
+  try {
+    const signature = req.headers['x-snippe-signature'];
+    const webhookSecret = process.env.SNIPPE_WEBHOOK_SECRET;
+
+    if (webhookSecret) {
+      if (!signature || !verifyWebhookSignature(req.body, signature, webhookSecret)) {
+        return res.status(401).json({ message: 'Invalid signature' });
+      }
+    }
+
+    const { event, data } = req.body;
+
+    if (event === 'payment.completed' && data.metadata?.type === 'commission_settlement') {
+      const txIds = data.metadata.transaction_ids;
+      if (txIds && txIds.length > 0) {
+        await pool.query(
+          `UPDATE transactions SET status = 'completed' WHERE id = ANY($1)`,
+          [txIds]
+        );
+        console.log('Commission settled for shop:', data.metadata.shop_id, '| Txs:', txIds.length);
+      }
+    }
+
+    res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('Commission webhook error:', err.message);
+    res.status(200).json({ received: true });
   }
 });
 

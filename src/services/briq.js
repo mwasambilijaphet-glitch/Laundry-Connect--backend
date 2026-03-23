@@ -11,40 +11,55 @@
  * API: https://api.briq.tz
  */
 
-const BRIQ_API_BASE = process.env.BRIQ_API_URL || 'https://api.briq.tz/v1';
-const BRIQ_API_KEY = process.env.BRIQ_API_KEY;
-const BRIQ_SENDER_ID = process.env.BRIQ_SENDER_ID || 'LaundryConnect';
+// Read env at runtime (not module load) so .env changes are picked up
+function getConfig() {
+  return {
+    apiBase: process.env.BRIQ_API_URL || 'https://api.briq.tz/v1',
+    apiKey: process.env.BRIQ_API_KEY,
+    senderId: process.env.BRIQ_SENDER_ID || 'LaundryConnect',
+  };
+}
 
 /**
  * Send SMS OTP via briq.tz
  */
 async function sendSMSOTP(phone, otp) {
-  if (!BRIQ_API_KEY) {
+  const { apiBase, apiKey, senderId } = getConfig();
+
+  if (!apiKey) {
     console.warn('BRIQ_API_KEY not set — SMS OTP will not be sent');
     return { success: false, reason: 'api_key_missing' };
   }
 
-  try {
-    const response = await fetch(`${BRIQ_API_BASE}/sms/send`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${BRIQ_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        sender_id: BRIQ_SENDER_ID,
-        to: formatPhone(phone),
-        message: `Your Laundry Connect verification code is: ${otp}. This code expires in 10 minutes. Do not share it with anyone.`,
-      }),
-    });
+ try {
+  const response = await fetch(`${apiBase}/message/send-instant`, {
+    method: 'POST',
+    headers: {
+      'X-API-Key': apiKey, // ✅ correct header
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender_id: senderId,
+      recipients: formatPhone(phone),
+      content: `Your Laundry Connect verification code is: ${otp}. This code expires in 10 minutes. Do not share it with anyone.`,
+      campaign_id: "otp_campaign",
+      groups: []
+    }),
+  });
 
-    const data = await response.json();
-    console.log('Briq SMS sent to:', phone, '| Response:', data.status || data.message);
-    return { success: response.ok, data };
+  // 🔍 Handle non-JSON responses safely
+  const text = await response.text();
+
+  try {
+    const data = JSON.parse(text);
+    console.log("✅ Success:", data);
   } catch (err) {
-    console.error('Briq SMS error:', err.message);
-    return { success: false, reason: err.message };
+    console.error("❌ Not JSON response:", text);
   }
+
+} catch (error) {
+  console.error("🔥 Fetch error:", error);
+}
 }
 
 /**
@@ -52,16 +67,18 @@ async function sendSMSOTP(phone, otp) {
  * No Twilio or Meta Business API needed — briq.tz handles the WhatsApp channel directly.
  */
 async function sendWhatsAppOTP(phone, otp) {
-  if (!BRIQ_API_KEY) {
+  const { apiBase, apiKey } = getConfig();
+
+  if (!apiKey) {
     console.warn('BRIQ_API_KEY not set — WhatsApp OTP will not be sent');
     return { success: false, reason: 'api_key_missing' };
   }
 
   try {
-    const response = await fetch(`${BRIQ_API_BASE}/whatsapp/send`, {
+    const response = await fetch(`${apiBase}/whatsapp/send`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${BRIQ_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -75,7 +92,7 @@ async function sendWhatsAppOTP(phone, otp) {
               type: 'body',
               parameters: [
                 { type: 'text', text: otp },
-                { type: 'text', text: '10' }, // expiry in minutes
+                { type: 'text', text: '10' },
               ],
             },
             {
@@ -88,13 +105,12 @@ async function sendWhatsAppOTP(phone, otp) {
             },
           ],
         },
-        // Fallback for when template is not available
-        fallback_message: `*Laundry Connect* 🧺\n\nYour verification code is:\n\n*${otp}*\n\nThis code expires in 10 minutes.\nDo not share it with anyone.`,
+        fallback_message: `*Laundry Connect*\n\nYour verification code is:\n\n*${otp}*\n\nThis code expires in 10 minutes.\nDo not share it with anyone.`,
       }),
     });
 
     const data = await response.json();
-    console.log('Briq WhatsApp sent to:', phone, '| Response:', data.status || data.message);
+    console.log('Briq WhatsApp sent to:', formatPhone(phone), '| Status:', response.status, '| Response:', data.status || data.message);
     return { success: response.ok, data };
   } catch (err) {
     console.error('Briq WhatsApp error:', err.message);
@@ -106,21 +122,25 @@ async function sendWhatsAppOTP(phone, otp) {
  * Send password reset OTP via SMS
  */
 async function sendPasswordResetSMS(phone, otp) {
-  if (!BRIQ_API_KEY) {
+  const { apiBase, apiKey, senderId } = getConfig();
+
+  if (!apiKey) {
     return { success: false, reason: 'api_key_missing' };
   }
 
   try {
-    const response = await fetch(`${BRIQ_API_BASE}/sms/send`, {
+    const response = await fetch(`${apiBase}/sms/send`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${BRIQ_API_KEY}`,
+        'X-API-Key': apiKey, // ✅ correct header
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        sender_id: BRIQ_SENDER_ID,
-        to: formatPhone(phone),
-        message: `Your Laundry Connect password reset code is: ${otp}. This code expires in 10 minutes. If you didn't request this, please ignore.`,
+        sender_id: senderId,
+        recipients: formatPhone(phone),
+        content: `Your Laundry Connect password reset code is: ${otp}. This code expires in 10 minutes. If you didn't request this, please ignore.`,
+        campaign_id: "password_reset",
+        groups: []
       }),
     });
 
@@ -134,9 +154,10 @@ async function sendPasswordResetSMS(phone, otp) {
 
 /**
  * Format Tanzanian phone number to international format
- * e.g., "0754123456" → "+255754123456"
+ * e.g., "0754123456" -> "+255754123456"
  */
 function formatPhone(phone) {
+  if (!phone || typeof phone !== 'string') return '';
   let cleaned = phone.replace(/[\s\-()]/g, '');
   if (cleaned.startsWith('0') && cleaned.length === 10) {
     cleaned = '+255' + cleaned.substring(1);
