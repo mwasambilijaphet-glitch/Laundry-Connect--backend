@@ -5,7 +5,15 @@ const { authenticate, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const SNIPPE_API_BASE = 'https://api.snippe.sh/v1';
+const SNIPPE_API_BASE = 'https://api.snippe.sh/api/v1';
+
+// Snippe requires HTTPS for webhooks — in dev, skip webhook or use a tunnel URL
+function getWebhookUrl(path) {
+  const base = process.env.WEBHOOK_URL || process.env.BACKEND_URL || 'http://localhost:5000';
+  // Snippe rejects http:// webhook URLs, so omit in dev
+  if (base.startsWith('http://')) return undefined;
+  return `${base}${path}`;
+}
 
 /**
  * Verify Snippe webhook signature using HMAC-SHA256
@@ -24,18 +32,19 @@ function verifyWebhookSignature(payload, signature, secret) {
 }
 
 /**
- * Map frontend payment method IDs to Snippe method values
+ * Map frontend payment method IDs to Snippe payment_type values
+ * Snippe types: "mobile", "card", "dynamic-qr"
  */
-function mapPaymentMethod(method) {
+function mapPaymentType(method) {
   const mapping = {
-    mobile_money: 'mobile_money',
-    mpesa: 'mobile_money',
-    airtel: 'mobile_money',
-    tigo: 'mobile_money',
+    mobile_money: 'mobile',
+    mpesa: 'mobile',
+    airtel: 'mobile',
+    tigo: 'mobile',
     card: 'card',
-    qr: 'qr',
+    qr: 'dynamic-qr',
   };
-  return mapping[method] || method;
+  return mapping[method] || 'mobile';
 }
 
 // ── POST /api/payments/initiate — Start payment via Snippe ─
@@ -99,15 +108,47 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
     }
 
     // Get user details for Snippe
-    const userResult = await pool.query('SELECT full_name, email FROM users WHERE id = $1', [req.user.id]);
+    const userResult = await pool.query('SELECT full_name, email, phone AS user_phone FROM users WHERE id = $1', [req.user.id]);
     const user = userResult.rows[0];
 
+    // Split full_name into firstname/lastname for Snippe
+    const nameParts = (user.full_name || 'Customer').split(' ');
+    const firstname = nameParts[0];
+    const lastname = nameParts.slice(1).join(' ') || firstname;
+
+    // Format phone for Snippe (0712345678 format)
+    const paymentPhone = phone || user.user_phone || '';
+
     let snippeData;
-    const snippeMethod = mapPaymentMethod(method);
+    const paymentType = mapPaymentType(method);
 
     if (process.env.SNIPPE_API_KEY) {
       // ── Live Snippe API call ──────────────────────────
+      // Docs: https://docs.snippe.sh/docs/2026-01-25
+      // SDK ref: https://github.com/Neurotech-HQ/snippe-python-sdk
       const idempotencyKey = `order-${order.id}-${Date.now()}`;
+
+      const snippeBody = {
+        payment_type: paymentType,
+        details: {
+          amount: Math.round(parseFloat(order.total_amount)),
+          currency: 'TZS',
+          callback_url: `${process.env.FRONTEND_URL}/order/${order.order_number}`,
+        },
+        phone_number: paymentPhone,
+        customer: {
+          firstname,
+          lastname,
+          email: user.email,
+        },
+        webhook_url: getWebhookUrl('/api/payments/webhook'),
+        metadata: {
+          order_id: String(order.id),
+          order_number: order.order_number,
+        },
+      };
+
+      console.log('Snippe request:', JSON.stringify(snippeBody, null, 2));
 
       const snippeResponse = await fetch(`${SNIPPE_API_BASE}/payments`, {
         method: 'POST',
@@ -116,45 +157,42 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey,
         },
-        body: JSON.stringify({
-          amount: parseFloat(order.total_amount),
-          currency: 'TZS',
-          phone: phone || undefined,
-          method: snippeMethod,
-          customer: {
-            name: user.full_name,
-            email: user.email,
-          },
-          webhook_url: `${process.env.BACKEND_URL}/api/payments/webhook`,
-          callback_url: `${process.env.FRONTEND_URL}/order/${order.order_number}`,
-          metadata: {
-            order_id: order.id,
-            order_number: order.order_number,
-          },
-          description: `Laundry Connect Order #${order.order_number}`,
-        }),
+        body: JSON.stringify(snippeBody),
       });
 
       snippeData = await snippeResponse.json();
 
       if (!snippeResponse.ok) {
-        console.error('Snippe API error:', snippeData);
+        console.error('Snippe API error:', snippeResponse.status, snippeData);
         return res.status(502).json({
           success: false,
           message: snippeData.message || 'Payment gateway error. Please try again.',
         });
       }
 
-      console.log('Snippe payment initiated:', snippeData.id, '| Amount:', order.total_amount, 'TZS');
+      // Snippe returns { status: "success", data: { reference, status, payment_url, ... } }
+      const paymentData = snippeData.data || snippeData;
+      console.log('Snippe payment initiated:', paymentData.reference, '| Amount:', order.total_amount, 'TZS');
+
+      // Normalize for our DB
+      snippeData = {
+        id: paymentData.reference || paymentData.id,
+        status: paymentData.status,
+        message: paymentType === 'mobile' ? 'USSD push sent to your phone' : 'Payment initiated',
+        checkout_url: paymentData.payment_url || null,
+        qr_code: paymentData.payment_qr_code || null,
+      };
     } else {
       // ── Sandbox/test mode (no API key) ────────────────
       console.log('SNIPPE_API_KEY not set — using test mode');
       snippeData = {
         id: `snp_test_${Date.now()}`,
         status: 'pending',
-        message: snippeMethod === 'mobile_money'
+        message: paymentType === 'mobile'
           ? 'USSD push sent to customer phone'
           : 'Redirect URL generated',
+        checkout_url: null,
+        qr_code: null,
       };
     }
 
@@ -173,6 +211,7 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
         amount: order.total_amount,
         method: method,
         checkout_url: snippeData.checkout_url || null,
+        qr_code: snippeData.qr_code || null,
       },
     });
   } catch (err) {
@@ -204,10 +243,11 @@ router.post('/webhook', async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid webhook payload' });
     }
 
-    console.log('Snippe webhook received:', event, '| Ref:', data.id);
+    console.log('Snippe webhook received:', event, '| Ref:', data.reference || data.id);
 
     if (event === 'payment.completed') {
-      const { metadata, id: snippeRef } = data;
+      const snippeRef = data.reference || data.id;
+      const { metadata } = data;
 
       if (!metadata?.order_id) {
         return res.status(400).json({ message: 'Missing order_id in metadata' });
@@ -240,7 +280,8 @@ router.post('/webhook', async (req, res, next) => {
     }
 
     if (event === 'payment.failed') {
-      const { metadata, id: snippeRef } = data;
+      const snippeRef = data.reference || data.id;
+      const { metadata } = data;
       if (metadata?.order_id) {
         await pool.query(
           `UPDATE orders SET payment_status = 'failed', updated_at = NOW() WHERE id = $1`,
@@ -317,7 +358,8 @@ router.get('/status/:reference', authenticate, async (req, res, next) => {
         const snippeRes = await fetch(`${SNIPPE_API_BASE}/payments/${reference}`, {
           headers: { 'Authorization': `Bearer ${process.env.SNIPPE_API_KEY}` },
         });
-        const snippeData = await snippeRes.json();
+        const snippeJson = await snippeRes.json();
+        const snippeData = snippeJson.data || snippeJson;
 
         if (snippeData.status === 'completed') {
           await pool.query(`UPDATE transactions SET status = 'completed' WHERE id = $1`, [tx.id]);

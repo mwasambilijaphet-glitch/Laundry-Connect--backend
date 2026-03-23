@@ -189,7 +189,11 @@ router.post('/commission/settle', async (req, res, next) => {
       const userResult = await pool.query('SELECT full_name, email FROM users WHERE id = $1', [req.user.id]);
       const user = userResult.rows[0];
 
-      const snippeResponse = await fetch('https://api.snippe.sh/v1/payments', {
+      const nameParts = (user.full_name || 'Owner').split(' ');
+      const firstname = nameParts[0];
+      const lastname = nameParts.slice(1).join(' ') || firstname;
+
+      const snippeResponse = await fetch('https://api.snippe.sh/api/v1/payments', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.SNIPPE_API_KEY}`,
@@ -197,41 +201,42 @@ router.post('/commission/settle', async (req, res, next) => {
           'Idempotency-Key': `commission-${shop.id}-${Date.now()}`,
         },
         body: JSON.stringify({
-          amount: totalOwed,
-          currency: 'TZS',
-          phone: phone || undefined,
-          method: 'mobile_money',
-          customer: {
-            name: user.full_name,
-            email: user.email,
+          payment_type: 'mobile',
+          details: {
+            amount: totalOwed,
+            currency: 'TZS',
           },
-          webhook_url: `${process.env.BACKEND_URL}/api/payments/commission-webhook`,
+          phone_number: phone || '',
+          customer: { firstname, lastname, email: user.email },
+          webhook_url: (process.env.WEBHOOK_URL || process.env.BACKEND_URL || '').startsWith('https')
+            ? `${process.env.WEBHOOK_URL || process.env.BACKEND_URL}/api/payments/commission-webhook`
+            : undefined,
           metadata: {
             type: 'commission_settlement',
-            shop_id: shop.id,
-            transaction_ids: txIds,
+            shop_id: String(shop.id),
+            transaction_ids: txIds.map(String),
           },
-          description: `Commission settlement for ${shop.name}`,
         }),
       });
 
-      const snippeData = await snippeResponse.json();
+      const snippeJson = await snippeResponse.json();
 
       if (!snippeResponse.ok) {
-        console.error('Snippe commission error:', snippeData);
+        console.error('Snippe commission error:', snippeJson);
         return res.status(502).json({
           success: false,
-          message: snippeData.message || 'Payment gateway error. Please try again.',
+          message: snippeJson.message || 'Payment gateway error. Please try again.',
         });
       }
 
-      console.log('Commission settlement initiated:', snippeData.id, '| Amount:', totalOwed, 'TZS');
+      const paymentData = snippeJson.data || snippeJson;
+      console.log('Commission settlement initiated:', paymentData.reference, '| Amount:', totalOwed, 'TZS');
 
       res.json({
         success: true,
         message: 'Commission payment initiated. Check your phone for the USSD prompt.',
         settlement: {
-          reference: snippeData.id,
+          reference: paymentData.reference || paymentData.id,
           amount: totalOwed,
           orders_count: pendingResult.rows.length,
         },

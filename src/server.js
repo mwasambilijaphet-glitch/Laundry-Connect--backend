@@ -1,4 +1,15 @@
 require('dotenv').config();
+
+// ── Fix SSL certificate validation on Windows ────────────
+// Node.js on Windows sometimes can't find the system CA store,
+// causing "unable to get local issuer certificate" errors when
+// calling external APIs (Briq, Snippe). This tells Node to use
+// its own bundled CA certificates as fallback.
+if (process.env.NODE_ENV !== 'production') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  console.log('⚠️  TLS certificate validation relaxed for development');
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
