@@ -9,7 +9,7 @@ const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../servic
 
 const router = express.Router();
 
-// ── Email transporter (used for OTP & password reset) ────
+// ── Email transporter (Gmail SMTP) ───────────────────────
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: parseInt(process.env.SMTP_PORT || '587'),
@@ -20,12 +20,14 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const EMAIL_FROM = `"Laundry Connect" <${process.env.SMTP_USER}>`;
+
 // Verify email config on startup
 transporter.verify((error) => {
   if (error) {
-    console.error('SMTP config error:', error.message);
+    console.error('❌ SMTP config error:', error.message);
   } else {
-    console.log('SMTP ready to send emails');
+    console.log('✅ Email ready — sending as: Laundry Connect');
   }
 });
 
@@ -121,8 +123,6 @@ function clearLoginAttempts(ip, identifier) {
 }
 
 // ── Email branding ───────────────────────────────────────
-const EMAIL_FROM = `"Laundry Connect" <${process.env.SMTP_USER}>`;
-
 function emailWrapper(content) {
   return `
 <!DOCTYPE html>
@@ -168,7 +168,7 @@ function emailWrapper(content) {
 </html>`;
 }
 
-// ── Email senders ────────────────────────────────────────
+// ── Email senders (Gmail SMTP) ───────────────────────────
 async function sendOTPEmail(email, otp) {
   try {
     const info = await transporter.sendMail({
