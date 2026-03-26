@@ -5,7 +5,9 @@ const { authenticate, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-const SNIPPE_API_BASE = 'https://api.snippe.sh/v1';
+const SNIPPE_API_BASE = process.env.SNIPPE_API_URL || 'https://api.snippe.sh/v1';
+const BACKEND_URL = process.env.BACKEND_URL || 'https://laundry-connect-backend.onrender.com';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://laundry-connect-frontend.vercel.app';
 
 /**
  * Verify Snippe webhook signature using HMAC-SHA256
@@ -16,7 +18,6 @@ function verifyWebhookSignature(payload, signature, secret) {
     .createHmac('sha256', secret)
     .update(JSON.stringify(payload))
     .digest('hex');
-  // SECURITY FIX: timingSafeEqual crashes if buffers differ in length
   const sigBuf = Buffer.from(signature, 'utf8');
   const expBuf = Buffer.from(expected, 'utf8');
   if (sigBuf.length !== expBuf.length) return false;
@@ -89,8 +90,8 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
             name: user.full_name,
             email: user.email,
           },
-          webhook_url: `${process.env.BACKEND_URL}/api/payments/webhook`,
-          callback_url: `${process.env.FRONTEND_URL}/order/${order.order_number}`,
+          webhook_url: `${BACKEND_URL}/api/payments/webhook`,
+          callback_url: `${FRONTEND_URL}/order/${order.order_number}`,
           metadata: {
             order_id: order.id,
             order_number: order.order_number,
@@ -111,15 +112,34 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 
       console.log('Snippe payment initiated:', snippeData.id, '| Amount:', order.total_amount, 'TZS');
     } else {
-      // ── Sandbox/test mode (no API key) ────────────────
-      console.log('SNIPPE_API_KEY not set — using test mode');
+      // ── Test mode (no API key) — auto-complete payment after 3s ──
+      console.log('SNIPPE_API_KEY not set — using test mode (auto-complete)');
+      const testRef = `snp_test_${Date.now()}`;
       snippeData = {
-        id: `snp_test_${Date.now()}`,
+        id: testRef,
         status: 'pending',
         message: snippeMethod === 'mobile_money'
-          ? 'USSD push sent to customer phone'
-          : 'Redirect URL generated',
+          ? 'Test mode: USSD push simulated'
+          : 'Test mode: payment simulated',
       };
+
+      // Auto-complete the payment after 3 seconds (simulates Snippe webhook)
+      setTimeout(async () => {
+        try {
+          await pool.query(
+            `UPDATE orders SET payment_status = 'paid', payment_reference = $1, status = 'confirmed', updated_at = NOW()
+             WHERE id = $2`,
+            [testRef, order.id]
+          );
+          await pool.query(
+            `UPDATE transactions SET status = 'completed' WHERE snippe_reference = $1`,
+            [testRef]
+          );
+          console.log('Test payment auto-completed for order:', order.id);
+        } catch (err) {
+          console.error('Test payment auto-complete error:', err.message);
+        }
+      }, 3000);
     }
 
     // Record transaction
@@ -147,7 +167,6 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 // ── POST /api/payments/webhook — Snippe webhook handler ───
 router.post('/webhook', async (req, res, next) => {
   try {
-    // Verify webhook signature (SECURITY: reject if secret is set but signature missing/invalid)
     const signature = req.headers['x-snippe-signature'];
     const webhookSecret = process.env.SNIPPE_WEBHOOK_SECRET;
 
@@ -177,25 +196,23 @@ router.post('/webhook', async (req, res, next) => {
         return res.status(400).json({ message: 'Missing order_id in metadata' });
       }
 
-      // Update order payment status
       await pool.query(
         `UPDATE orders SET payment_status = 'paid', payment_reference = $1, status = 'confirmed', updated_at = NOW()
          WHERE id = $2`,
         [snippeRef, metadata.order_id]
       );
 
-      // Update transaction
       await pool.query(
         `UPDATE transactions SET status = 'completed' WHERE snippe_reference = $1`,
         [snippeRef]
       );
 
-      // Create commission transaction
       const order = await pool.query('SELECT * FROM orders WHERE id = $1', [metadata.order_id]);
       if (order.rows[0]) {
         await pool.query(
           `INSERT INTO transactions (order_id, type, amount, status)
-           VALUES ($1, 'commission', $2, 'completed')`,
+           VALUES ($1, 'commission', $2, 'completed')
+           ON CONFLICT DO NOTHING`,
           [metadata.order_id, order.rows[0].platform_commission]
         );
       }
@@ -218,11 +235,10 @@ router.post('/webhook', async (req, res, next) => {
       }
     }
 
-    // Always respond 200 to Snippe
     res.status(200).json({ received: true });
   } catch (err) {
     console.error('Webhook error:', err.message);
-    res.status(200).json({ received: true }); // Still respond 200 to prevent retries
+    res.status(200).json({ received: true });
   }
 });
 
@@ -231,7 +247,6 @@ router.get('/status/:reference', authenticate, async (req, res, next) => {
   try {
     const { reference } = req.params;
 
-    // Check local DB first
     const txResult = await pool.query(
       'SELECT * FROM transactions WHERE snippe_reference = $1',
       [reference]

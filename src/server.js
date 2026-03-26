@@ -95,9 +95,11 @@ app.get('/api/health', async (req, res) => {
     status: dbStatus === 'connected' ? 'ok' : 'degraded',
     message: 'Laundry Connect API is running',
     db: dbStatus,
-    smtp: !!(process.env.SMTP_USER && process.env.SMTP_PASS) ? 'configured' : 'not configured',
+    smtp: !!(process.env.SMTP_USER && process.env.SMTP_PASS) ? 'configured' : 'NOT SET — emails will fail',
+    snippe: !!process.env.SNIPPE_API_KEY ? 'configured' : 'test mode (payments auto-complete)',
     briq: !!process.env.BRIQ_API_KEY ? 'configured' : 'not configured',
-    frontend_url: process.env.FRONTEND_URL || 'not set (defaults to localhost)',
+    backend_url: process.env.BACKEND_URL || 'NOT SET — webhooks will fail',
+    frontend_url: process.env.FRONTEND_URL || 'NOT SET — reset links will fail',
   });
 });
 
