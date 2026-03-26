@@ -2,50 +2,26 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../services/briq');
 
 const router = express.Router();
 
-// ── Email transporter (used for OTP & password reset) ────
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-const smtpConfigured = !!(smtpUser && smtpPass);
+// ── Email via Resend HTTP API (works on Render — no SMTP ports needed) ──
+const resendApiKey = process.env.RESEND_API_KEY;
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const emailFrom = process.env.EMAIL_FROM || 'Laundry Connect <onboarding@resend.dev>';
 
-const smtpPort = parseInt(process.env.SMTP_PORT || '465');
-const transporter = smtpConfigured
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: smtpPort,
-      secure: smtpPort === 465,
-      auth: {
-        user: smtpUser,
-        pass: smtpPass,
-      },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-    })
-  : null;
-
-// Verify email config on startup
-if (transporter) {
-  transporter.verify((error) => {
-    if (error) {
-      console.error('SMTP config error:', error.message);
-      console.error('SMTP_USER set:', !!smtpUser, '| SMTP_PASS set:', !!smtpPass, '| SMTP_PASS length:', smtpPass?.length);
-    } else {
-      console.log('SMTP ready to send emails via', smtpUser);
-    }
-  });
+if (resend) {
+  console.log('Resend email configured (HTTP API — no SMTP ports needed)');
 } else {
-  console.warn('SMTP not configured — SMTP_USER and SMTP_PASS are required for email delivery');
+  console.warn('RESEND_API_KEY not set — emails will not be sent. Get a free key at https://resend.com');
 }
 
 // ── Cryptographically secure OTP ─────────────────────────
 function generateOTP() {
-  // Use crypto.randomInt instead of Math.random (SECURITY FIX)
   return crypto.randomInt(100000, 999999).toString();
 }
 
@@ -76,7 +52,6 @@ function isValidPhone(phone) {
 }
 
 function isStrongPassword(password) {
-  // Min 8 chars, at least 1 uppercase, 1 lowercase, 1 number
   return password.length >= 8 &&
     /[A-Z]/.test(password) &&
     /[a-z]/.test(password) &&
@@ -91,7 +66,7 @@ function sanitizeString(str, maxLen = 200) {
 // ── Login attempt tracking (in-memory, per IP+email) ─────
 const loginAttempts = new Map();
 const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+const LOCKOUT_DURATION = 15 * 60 * 1000;
 
 function getAttemptKey(ip, identifier) {
   return `${ip}:${identifier}`;
@@ -108,7 +83,6 @@ function checkLoginLockout(ip, identifier) {
     return { locked: true, remainingMin };
   }
 
-  // Reset if lockout expired
   if (record.lockedUntil && Date.now() >= record.lockedUntil) {
     loginAttempts.delete(key);
     return { locked: false };
@@ -134,15 +108,15 @@ function clearLoginAttempts(ip, identifier) {
   loginAttempts.delete(getAttemptKey(ip, identifier));
 }
 
-// ── Email senders ────────────────────────────────────────
+// ── Email senders (via Resend HTTP API) ──────────────────
 async function sendOTPEmail(email, otp) {
-  if (!transporter) {
-    console.error('Cannot send OTP email — SMTP not configured');
+  if (!resend) {
+    console.error('Cannot send OTP email — RESEND_API_KEY not set');
     return false;
   }
   try {
-    const info = await transporter.sendMail({
-      from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: emailFrom,
       to: email,
       subject: 'Your Laundry Connect Verification Code',
       html: `
@@ -156,7 +130,11 @@ async function sendOTPEmail(email, otp) {
         </div>
       `,
     });
-    console.log('OTP email sent to:', email, '| MessageID:', info.messageId);
+    if (error) {
+      console.error('Resend OTP email error:', error);
+      return false;
+    }
+    console.log('OTP email sent to:', email, '| ID:', data.id);
     return true;
   } catch (err) {
     console.error('Failed to send OTP email to:', email, '| Error:', err.message);
@@ -165,15 +143,15 @@ async function sendOTPEmail(email, otp) {
 }
 
 async function sendPasswordResetEmail(email, otp) {
-  if (!transporter) {
-    console.error('Cannot send reset email — SMTP not configured');
+  if (!resend) {
+    console.error('Cannot send reset email — RESEND_API_KEY not set');
     return false;
   }
   const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
-    await transporter.sendMail({
-      from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: emailFrom,
       to: email,
       subject: 'Reset Your Laundry Connect Password',
       html: `
@@ -197,7 +175,11 @@ async function sendPasswordResetEmail(email, otp) {
         </div>
       `,
     });
-    console.log('Password reset email sent to:', email);
+    if (error) {
+      console.error('Resend reset email error:', error);
+      return false;
+    }
+    console.log('Password reset email sent to:', email, '| ID:', data.id);
     return true;
   } catch (err) {
     console.error('Failed to send reset email:', err.message);
@@ -213,7 +195,6 @@ router.post('/register', async (req, res, next) => {
     const email = sanitizeString(req.body.email, 254).toLowerCase();
     const password = req.body.password || '';
     const role = req.body.role;
-    const otp_channel = req.body.otp_channel;
 
     if (!full_name || !phone || !email || !password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
@@ -246,7 +227,7 @@ router.post('/register', async (req, res, next) => {
       return res.status(409).json({ success: false, message: 'Email or phone already registered' });
     }
 
-    const password_hash = await bcrypt.hash(password, 12); // 12 rounds (SECURITY: upgraded from 10)
+    const password_hash = await bcrypt.hash(password, 12);
 
     const result = await pool.query(
       `INSERT INTO users (full_name, phone, email, password_hash, role, is_verified)
@@ -341,7 +322,6 @@ router.post('/verify-otp', async (req, res, next) => {
 router.post('/resend-otp', async (req, res, next) => {
   try {
     const email = sanitizeString(req.body.email, 254).toLowerCase();
-    const otp_channel = req.body.otp_channel;
 
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
@@ -349,7 +329,6 @@ router.post('/resend-otp', async (req, res, next) => {
 
     const userResult = await pool.query('SELECT id, phone FROM users WHERE LOWER(email) = $1', [email]);
     if (userResult.rows.length === 0) {
-      // Don't reveal if user exists (SECURITY)
       return res.json({ success: true, message: 'If the account exists, a new OTP has been sent' });
     }
 
@@ -397,7 +376,6 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone and password are required' });
     }
 
-    // Check lockout
     const lockout = checkLoginLockout(req.ip, phone);
     if (lockout.locked) {
       return res.status(429).json({
@@ -428,7 +406,6 @@ router.post('/login', async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Please verify your account first' });
     }
 
-    // Clear failed attempts on success
     clearLoginAttempts(req.ip, phone);
 
     const token = generateToken(user);
@@ -463,11 +440,9 @@ router.post('/forgot-password', async (req, res, next) => {
 
     const userResult = await pool.query('SELECT id, email, phone FROM users WHERE LOWER(email) = $1', [email]);
     if (userResult.rows.length === 0) {
-      // Don't reveal if email exists (SECURITY)
       return res.json({ success: true, message: 'If this email exists, a reset link has been sent' });
     }
 
-    // Invalidate old OTPs
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE email = $1 AND is_used = FALSE', [email]);
 
     const otp = generateOTP();
@@ -478,10 +453,8 @@ router.post('/forgot-password', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send password reset link via EMAIL automatically
     const emailSent = await sendPasswordResetEmail(email, otp);
 
-    // Also send OTP via SMS as backup
     const phone = userResult.rows[0].phone;
     if (phone) {
       await sendPasswordResetSMS(phone, otp);
@@ -516,7 +489,6 @@ router.post('/reset-password', async (req, res, next) => {
       });
     }
 
-    // Verify OTP
     const otpResult = await pool.query(
       `SELECT * FROM otp_codes
        WHERE email = $1 AND otp_code = $2 AND is_used = FALSE AND expires_at > NOW()
@@ -528,10 +500,8 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid or expired reset code' });
     }
 
-    // Mark OTP as used
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [otpResult.rows[0].id]);
 
-    // Update password
     const password_hash = await bcrypt.hash(new_password, 12);
     await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = $2', [password_hash, email]);
 
