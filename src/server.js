@@ -25,6 +25,9 @@ if (missing.length) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ── Trust proxy (Render runs behind a reverse proxy) ─────
+app.set('trust proxy', 1);
+
 // ── Security Headers ─────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
