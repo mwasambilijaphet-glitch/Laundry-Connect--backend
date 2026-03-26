@@ -263,37 +263,25 @@ router.post('/register', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send OTP via chosen channel
-    let otpSent = false;
-    const channel = otp_channel || 'sms';
+    // Send OTP via email (primary channel)
+    let otpSent = await sendOTPEmail(email, otp);
 
-    if (channel === 'whatsapp') {
-      const waResult = await sendWhatsAppOTP(phone, otp);
-      otpSent = waResult.success;
-      if (!otpSent) {
-        const smsResult = await sendSMSOTP(phone, otp);
-        otpSent = smsResult.success;
-      }
-    } else if (channel === 'sms') {
+    // Fallback to SMS/WhatsApp if email fails
+    if (!otpSent) {
       const smsResult = await sendSMSOTP(phone, otp);
       otpSent = smsResult.success;
-    }
-
-    // Fallback to email if SMS/WhatsApp not configured or failed
-    if (!otpSent) {
-      otpSent = await sendOTPEmail(email, otp);
+      if (!otpSent) {
+        const waResult = await sendWhatsAppOTP(phone, otp);
+        otpSent = waResult.success;
+      }
     }
 
     res.status(201).json({
       success: true,
       message: otpSent
-        ? channel === 'whatsapp'
-          ? 'Registration successful. Check your WhatsApp for the OTP.'
-          : channel === 'sms'
-            ? 'Registration successful. Check your phone for the OTP.'
-            : 'Registration successful. Check your email for the OTP.'
+        ? 'Registration successful. Check your email for the verification code.'
         : 'Registration successful. OTP failed to send — contact support.',
-      channel: otpSent ? channel : 'failed',
+      channel: otpSent ? 'email' : 'failed',
       user: result.rows[0],
     });
   } catch (err) {
@@ -376,24 +364,18 @@ router.post('/resend-otp', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    let otpSent = false;
-    const phone = userResult.rows[0].phone;
-    const channel = otp_channel || 'sms';
+    // Send OTP via email (primary channel)
+    let otpSent = await sendOTPEmail(email, otp);
 
-    if (channel === 'whatsapp') {
-      const waResult = await sendWhatsAppOTP(phone, otp);
-      otpSent = waResult.success;
-      if (!otpSent) {
-        const smsResult = await sendSMSOTP(phone, otp);
-        otpSent = smsResult.success;
-      }
-    } else if (channel === 'sms') {
+    // Fallback to SMS/WhatsApp if email fails
+    if (!otpSent) {
+      const phone = userResult.rows[0].phone;
       const smsResult = await sendSMSOTP(phone, otp);
       otpSent = smsResult.success;
-    }
-
-    if (!otpSent) {
-      otpSent = await sendOTPEmail(email, otp);
+      if (!otpSent) {
+        const waResult = await sendWhatsAppOTP(phone, otp);
+        otpSent = waResult.success;
+      }
     }
 
     res.json({
