@@ -84,12 +84,21 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', async (req, res) => {
+  let dbStatus = 'unknown';
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', message: 'Laundry Connect API is running', db: 'connected' });
+    dbStatus = 'connected';
   } catch (err) {
-    res.status(500).json({ status: 'error', message: 'API running but database unavailable', db: err.message });
+    dbStatus = 'error: ' + err.message;
   }
+  res.json({
+    status: dbStatus === 'connected' ? 'ok' : 'degraded',
+    message: 'Laundry Connect API is running',
+    db: dbStatus,
+    smtp: !!(process.env.SMTP_USER && process.env.SMTP_PASS) ? 'configured' : 'not configured',
+    briq: !!process.env.BRIQ_API_KEY ? 'configured' : 'not configured',
+    frontend_url: process.env.FRONTEND_URL || 'not set (defaults to localhost)',
+  });
 });
 
 app.use('/api/auth/login', authLimiter);
