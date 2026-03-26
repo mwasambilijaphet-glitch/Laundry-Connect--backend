@@ -10,6 +10,25 @@ const BACKEND_URL = process.env.BACKEND_URL || 'https://laundry-connect-backend.
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
 
 /**
+ * Format Tanzanian phone to international format for Snippe
+ * "0768188065" -> "+255768188065"
+ */
+function formatPhone(phone) {
+  if (!phone || typeof phone !== 'string') return phone;
+  let cleaned = phone.replace(/[\s\-()]/g, '');
+  if (cleaned.startsWith('0') && cleaned.length === 10) {
+    return '+255' + cleaned.substring(1);
+  }
+  if (cleaned.startsWith('255') && !cleaned.startsWith('+')) {
+    return '+' + cleaned;
+  }
+  if (!cleaned.startsWith('+')) {
+    return '+' + cleaned;
+  }
+  return cleaned;
+}
+
+/**
  * Verify Snippe webhook signature using HMAC-SHA256
  */
 function verifyWebhookSignature(payload, signature, secret) {
@@ -69,10 +88,17 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
 
     let snippeData;
     const snippeMethod = mapPaymentMethod(method);
+    const formattedPhone = formatPhone(phone);
+
+    console.log('Payment initiate:', { order_id, method, snippeMethod, phone, formattedPhone, amount: order.total_amount });
 
     if (process.env.SNIPPE_API_KEY) {
       // ── Live Snippe API call ──────────────────────────
       const idempotencyKey = `order-${order.id}-${Date.now()}`;
+      const webhookUrl = `${BACKEND_URL}/api/payments/webhook`;
+      const callbackUrl = `${FRONTEND_URL}/order/${order.order_number}`;
+
+      console.log('Snippe request:', { webhookUrl, callbackUrl, snippeMethod, formattedPhone });
 
       const snippeResponse = await fetch(`${SNIPPE_API_BASE}/payments`, {
         method: 'POST',
@@ -84,14 +110,14 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
         body: JSON.stringify({
           amount: parseFloat(order.total_amount),
           currency: 'TZS',
-          phone: phone || undefined,
+          phone: formattedPhone || undefined,
           method: snippeMethod,
           customer: {
             name: user.full_name,
             email: user.email,
           },
-          webhook_url: `${BACKEND_URL}/api/payments/webhook`,
-          callback_url: `${FRONTEND_URL}/order/${order.order_number}`,
+          webhook_url: webhookUrl,
+          callback_url: callbackUrl,
           metadata: {
             order_id: order.id,
             order_number: order.order_number,
@@ -100,13 +126,24 @@ router.post('/initiate', authenticate, authorize('customer'), async (req, res, n
         }),
       });
 
-      snippeData = await snippeResponse.json();
+      const snippeRawText = await snippeResponse.text();
+      console.log('Snippe response status:', snippeResponse.status, '| Body:', snippeRawText);
 
-      if (!snippeResponse.ok) {
-        console.error('Snippe API error:', snippeData);
+      try {
+        snippeData = JSON.parse(snippeRawText);
+      } catch {
+        console.error('Snippe returned non-JSON:', snippeRawText);
         return res.status(502).json({
           success: false,
-          message: snippeData.message || 'Payment gateway error. Please try again.',
+          message: 'Payment gateway returned invalid response. Please try again.',
+        });
+      }
+
+      if (!snippeResponse.ok) {
+        console.error('Snippe API error:', snippeResponse.status, snippeData);
+        return res.status(502).json({
+          success: false,
+          message: snippeData.message || snippeData.error || 'Payment gateway error. Please try again.',
         });
       }
 
