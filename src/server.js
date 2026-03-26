@@ -28,20 +28,16 @@ const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
+// ── CORS — allow all origins for now (fix 405 issues) ────
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, Postman)
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.vercel.app')) {
-      return callback(null, true);
-    }
-    console.warn('CORS blocked origin:', origin);
-    return callback(new Error('Not allowed by CORS'));
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+// Explicitly handle preflight for all routes
+app.options('*', cors());
 
 // ── Body parsing with size limits (prevent DoS) ──────────
 app.use(express.json({ limit: '1mb' }));
@@ -50,9 +46,10 @@ app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 // ── Global rate limiter (100 req / 15 min per IP) ────────
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
   message: { success: false, message: 'Too many requests. Please try again later.' },
 });
 app.use(globalLimiter);
@@ -60,7 +57,7 @@ app.use(globalLimiter);
 // ── Auth-specific rate limiter (stricter) ────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20, // 20 auth attempts per 15 min
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Please wait 15 minutes.' },
