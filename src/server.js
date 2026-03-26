@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
+const pool = require('./db/pool');
 const authRoutes = require('./routes/auth');
 const shopRoutes = require('./routes/shops');
 const orderRoutes = require('./routes/orders');
@@ -81,8 +82,18 @@ app.use((req, res, next) => {
 });
 
 // ── Routes ────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Laundry Connect API is running' });
+// Root route (Render health check hits this)
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'Laundry Connect API' });
+});
+
+app.get('/api/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', message: 'Laundry Connect API is running', db: 'connected' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: 'API running but database unavailable', db: err.message });
+  }
 });
 
 // Apply auth rate limiter to sensitive routes
