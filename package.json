@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "db:migrate": "node src/db/migrate.js",
     "db:seed": "node src/db/seed.js",
-    "db:reset": "node src/db/migrate.js && node src/db/seed.js"
+    "db:reset": "node src/db/migrate.js && node src/db/add-messages.js && node src/db/seed.js",
+    "db:add-messages": "node src/db/add-messages.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

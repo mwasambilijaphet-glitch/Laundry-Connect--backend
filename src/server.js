@@ -13,6 +13,15 @@ const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
 
+// ── Startup validation ──────────────────────────────────
+const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
+const missing = REQUIRED_ENV.filter(v => !process.env[v]);
+if (missing.length) {
+  console.error(`FATAL: Missing required environment variables: ${missing.join(', ')}`);
+  console.error('Set them in Render dashboard → Environment tab');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -21,29 +30,20 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-// ── CORS — strict origin whitelist ───────────────────────
-const ALLOWED_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
-// ── CORS — allow all origins for now (fix 405 issues) ────
+// ── CORS — allow all origins ─────────────────────────────
 app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-
-// Explicitly handle preflight for all routes
 app.options('*', cors());
 
-// ── Body parsing with size limits (prevent DoS) ──────────
+// ── Body parsing ─────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
-// ── Global rate limiter (100 req / 15 min per IP) ────────
+// ── Rate limiters ────────────────────────────────────────
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
@@ -54,21 +54,21 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// ── Auth-specific rate limiter (stricter) ────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
   message: { success: false, message: 'Too many login attempts. Please wait 15 minutes.' },
 });
 
-// ── OTP rate limiter (prevent OTP spam) ──────────────────
 const otpLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
-  max: 5, // 5 OTP requests per 5 min
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
   message: { success: false, message: 'Too many OTP requests. Please wait a few minutes.' },
 });
 
@@ -79,9 +79,8 @@ app.use((req, res, next) => {
 });
 
 // ── Routes ────────────────────────────────────────────────
-// Root route (Render health check hits this)
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'Laundry Connect API' });
+  res.json({ status: 'ok', service: 'Laundry Connect API', version: '1.0.0' });
 });
 
 app.get('/api/health', async (req, res) => {
@@ -93,7 +92,6 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Apply auth rate limiter to sensitive routes
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', otpLimiter);
@@ -109,36 +107,40 @@ app.use('/api/messages', messageRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'Endpoint not found' });
+  res.status(404).json({ success: false, message: `Endpoint not found: ${req.method} ${req.path}` });
 });
 
-// ── Error handler (never leak internal errors) ───────────
+// ── Error handler ────────────────────────────────────────
 app.use((err, req, res, next) => {
-  // Log full error internally
   console.error('Error:', err.stack || err.message);
 
-  // CORS error
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ success: false, message: 'Origin not allowed' });
   }
 
-  // Never expose internal error details to client
   const statusCode = err.statusCode || 500;
-  const isProduction = process.env.NODE_ENV === 'production';
-
   res.status(statusCode).json({
     success: false,
-    message: isProduction
+    message: process.env.NODE_ENV === 'production'
       ? 'An internal error occurred. Please try again later.'
       : err.message || 'Internal server error',
   });
 });
 
-// ── Start ─────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`Laundry Connect API running on http://localhost:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Commission rate: ${process.env.PLATFORM_COMMISSION_RATE || '0.005'} (${(parseFloat(process.env.PLATFORM_COMMISSION_RATE || '0.005') * 100).toFixed(1)}%)`);
-  console.log(`Snippe payments: ${process.env.SNIPPE_API_KEY ? 'LIVE' : 'TEST MODE'}`);
-  console.log(`Briq OTP: ${process.env.BRIQ_API_KEY ? 'CONFIGURED' : 'NOT SET — will fallback to email'}`);
-});
+// ── Start with DB check ──────────────────────────────────
+async function start() {
+  try {
+    await pool.query('SELECT 1');
+    console.log('Database connected');
+  } catch (err) {
+    console.error('WARNING: Database connection failed:', err.message);
+    console.error('Server will start but API calls requiring DB will fail');
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Laundry Connect API running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
+
+start();

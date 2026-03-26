@@ -145,15 +145,7 @@ router.get('/:conversationId', authenticate, async (req, res, next) => {
       }
     }
 
-    // Get messages
-    const messages = await pool.query(
-      `SELECT m.*, u.full_name as sender_name
-       FROM messages m
-       JOIN users u ON m.sender_id = u.id
-       ORDER BY m.created_at ASC`,
-    );
-
-    // Actually filter by conversation
+    // Get messages for this conversation
     const filteredMessages = await pool.query(
       `SELECT m.*, u.full_name as sender_name
        FROM messages m
