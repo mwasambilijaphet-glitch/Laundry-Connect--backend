@@ -166,7 +166,7 @@ async function sendPasswordResetEmail(email, otp) {
     console.error('Cannot send reset email — SMTP not configured');
     return false;
   }
-  const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend.vercel.app';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
     await transporter.sendMail({
