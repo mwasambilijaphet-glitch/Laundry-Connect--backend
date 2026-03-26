@@ -14,15 +14,18 @@ const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 const smtpConfigured = !!(smtpUser && smtpPass);
 
+const smtpPort = parseInt(process.env.SMTP_PORT || '465');
 const transporter = smtpConfigured
   ? nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: false,
+      port: smtpPort,
+      secure: smtpPort === 465,
       auth: {
         user: smtpUser,
         pass: smtpPass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
     })
   : null;
 
