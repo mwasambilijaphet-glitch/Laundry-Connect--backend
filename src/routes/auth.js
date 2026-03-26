@@ -10,24 +10,35 @@ const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../servic
 const router = express.Router();
 
 // ── Email transporter (used for OTP & password reset) ────
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+const smtpConfigured = !!(smtpUser && smtpPass);
+
+const transporter = smtpConfigured
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: false,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    })
+  : null;
 
 // Verify email config on startup
-transporter.verify((error) => {
-  if (error) {
-    console.error('SMTP config error:', error.message);
-  } else {
-    console.log('SMTP ready to send emails');
-  }
-});
+if (transporter) {
+  transporter.verify((error) => {
+    if (error) {
+      console.error('SMTP config error:', error.message);
+      console.error('SMTP_USER set:', !!smtpUser, '| SMTP_PASS set:', !!smtpPass, '| SMTP_PASS length:', smtpPass?.length);
+    } else {
+      console.log('SMTP ready to send emails via', smtpUser);
+    }
+  });
+} else {
+  console.warn('SMTP not configured — SMTP_USER and SMTP_PASS are required for email delivery');
+}
 
 // ── Cryptographically secure OTP ─────────────────────────
 function generateOTP() {
@@ -122,6 +133,10 @@ function clearLoginAttempts(ip, identifier) {
 
 // ── Email senders ────────────────────────────────────────
 async function sendOTPEmail(email, otp) {
+  if (!transporter) {
+    console.error('Cannot send OTP email — SMTP not configured');
+    return false;
+  }
   try {
     const info = await transporter.sendMail({
       from: `"Laundry Connect" <${process.env.SMTP_USER}>`,
@@ -129,9 +144,9 @@ async function sendOTPEmail(email, otp) {
       subject: 'Your Laundry Connect Verification Code',
       html: `
         <div style="font-family: sans-serif; max-width: 400px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #2563EB;">Laundry Connect</h2>
+          <h2 style="color: #16a34a;">Laundry<span style="color: #22c55e;">Connect</span></h2>
           <p>Karibu! Your verification code is:</p>
-          <div style="background: #f1f5f9; padding: 20px; text-align: center; border-radius: 12px; margin: 20px 0;">
+          <div style="background: #f0fdf4; padding: 20px; text-align: center; border-radius: 12px; margin: 20px 0; border: 1px solid #bbf7d0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">${otp}</span>
           </div>
           <p style="color: #64748b; font-size: 14px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
@@ -147,7 +162,11 @@ async function sendOTPEmail(email, otp) {
 }
 
 async function sendPasswordResetEmail(email, otp) {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  if (!transporter) {
+    console.error('Cannot send reset email — SMTP not configured');
+    return false;
+  }
+  const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend.vercel.app';
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
     await transporter.sendMail({
@@ -157,19 +176,19 @@ async function sendPasswordResetEmail(email, otp) {
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 30px 20px;">
           <div style="text-align: center; margin-bottom: 24px;">
-            <h2 style="color: #2563EB; margin: 0;">Laundry<span style="color: #22c55e;">Connect</span></h2>
+            <h2 style="color: #16a34a; margin: 0;">Laundry<span style="color: #22c55e;">Connect</span></h2>
           </div>
           <p style="color: #334155; font-size: 15px;">Habari! You requested a password reset for your account.</p>
           <p style="color: #334155; font-size: 15px;">Click the button below to set a new password:</p>
           <div style="text-align: center; margin: 28px 0;">
-            <a href="${resetLink}" style="display: inline-block; background: #2563EB; color: #ffffff; padding: 14px 36px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px;">
+            <a href="${resetLink}" style="display: inline-block; background: #16a34a; color: #ffffff; padding: 14px 36px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px;">
               Reset Password
             </a>
           </div>
           <p style="color: #64748b; font-size: 13px;">Or copy this link into your browser:</p>
-          <p style="color: #2563EB; font-size: 13px; word-break: break-all;">${resetLink}</p>
-          <div style="background: #fef3c7; padding: 14px; border-radius: 10px; margin: 20px 0;">
-            <p style="color: #92400e; font-size: 13px; margin: 0;">Your reset code is: <strong style="letter-spacing: 4px; font-size: 18px;">${otp}</strong></p>
+          <p style="color: #16a34a; font-size: 13px; word-break: break-all;">${resetLink}</p>
+          <div style="background: #f0fdf4; padding: 14px; border-radius: 10px; margin: 20px 0; border: 1px solid #bbf7d0;">
+            <p style="color: #15803d; font-size: 13px; margin: 0;">Your reset code is: <strong style="letter-spacing: 4px; font-size: 18px;">${otp}</strong></p>
           </div>
           <p style="color: #94a3b8; font-size: 12px;">This link expires in 10 minutes. If you didn't request this, your account is safe — just ignore this email.</p>
         </div>
