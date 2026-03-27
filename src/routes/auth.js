@@ -393,6 +393,8 @@ router.post('/login', async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
+      // Timing attack protection: always run bcrypt even if user not found
+      await bcrypt.compare(password, '$2a$12$000000000000000000000uGEFnHBJcMjRk5E/V5Bh.4HqXGfjW8y');
       recordFailedLogin(req.ip, phone);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
