@@ -59,7 +59,7 @@ function mapPaymentMethod(method) {
 }
 
 // ── POST /api/payments/initiate — Start payment via Snippe ─
-router.post('/initiate', authenticate, authorize('customer'), async (req, res, next) => {
+router.post('/initiate', authenticate, authorize('customer', 'admin'), async (req, res, next) => {
   try {
     const { order_id, method, phone } = req.body;
 
