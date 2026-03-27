@@ -12,7 +12,7 @@ function generateOrderNumber() {
 }
 
 // ── POST /api/orders — Place a new order ──────────────────
-router.post('/', authenticate, authorize('customer'), async (req, res, next) => {
+router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, next) => {
   const client = await pool.connect();
 
   try {
