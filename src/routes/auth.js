@@ -149,7 +149,7 @@ async function sendPasswordResetEmail(email, otp) {
     console.error('Cannot send reset email — RESEND_API_KEY not set');
     return false;
   }
-  const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
+  const frontendUrl = (process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app').replace(/\/+$/, '');
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
     console.log('Sending reset email | from:', emailFrom, '| to:', email);
