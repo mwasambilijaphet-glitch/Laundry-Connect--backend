@@ -6,8 +6,8 @@ const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
 
 const SNIPPE_API_BASE = process.env.SNIPPE_API_URL || 'https://api.snippe.sh/v1';
-const BACKEND_URL = process.env.BACKEND_URL || 'https://laundry-connect-backend.onrender.com';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://laundry-connect-backend.onrender.com').replace(/\/+$/, '');
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app').replace(/\/+$/, '');
 
 /**
  * Format Tanzanian phone to international format for Snippe
