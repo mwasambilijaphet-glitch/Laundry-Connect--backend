@@ -105,9 +105,15 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       const firstname = nameParts[0] || 'Customer';
       const lastname = nameParts.slice(1).join(' ') || 'User';
 
+      // Map frontend method to Snippe payment_type
+      const paymentType = ['mpesa', 'airtel', 'tigo', 'mobile_money'].includes(method) ? 'mobile' : method === 'qr' ? 'qr' : 'card';
+
       const snippeBody = {
-        amount: Math.round(parseFloat(order.total_amount)),
-        currency: 'TZS',
+        payment_type: paymentType,
+        details: {
+          amount: Math.round(parseFloat(order.total_amount)),
+          currency: 'TZS',
+        },
         phone_number: formattedPhone || undefined,
         customer: {
           firstname,
