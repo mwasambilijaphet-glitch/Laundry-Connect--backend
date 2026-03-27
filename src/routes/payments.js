@@ -100,30 +100,38 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
 
       console.log('Snippe request:', { webhookUrl, callbackUrl, snippeMethod, formattedPhone });
 
+      // Split full name into firstname/lastname for Snippe
+      const nameParts = (user.full_name || '').trim().split(/\s+/);
+      const firstname = nameParts[0] || 'Customer';
+      const lastname = nameParts.slice(1).join(' ') || 'User';
+
+      const snippeBody = {
+        amount: Math.round(parseFloat(order.total_amount)),
+        currency: 'TZS',
+        phone_number: formattedPhone || undefined,
+        customer: {
+          firstname,
+          lastname,
+          email: user.email,
+        },
+        webhook_url: webhookUrl,
+        callback_url: callbackUrl,
+        metadata: {
+          order_id: order.id,
+          order_number: order.order_number,
+        },
+        idempotency_key: idempotencyKey,
+      };
+
+      console.log('Snippe request body:', JSON.stringify(snippeBody));
+
       const snippeResponse = await fetch(`${SNIPPE_API_BASE}/payments`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.SNIPPE_API_KEY}`,
           'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
         },
-        body: JSON.stringify({
-          amount: parseFloat(order.total_amount),
-          currency: 'TZS',
-          phone: formattedPhone || undefined,
-          method: snippeMethod,
-          customer: {
-            name: user.full_name,
-            email: user.email,
-          },
-          webhook_url: webhookUrl,
-          callback_url: callbackUrl,
-          metadata: {
-            order_id: order.id,
-            order_number: order.order_number,
-          },
-          description: `Laundry Connect Order #${order.order_number}`,
-        }),
+        body: JSON.stringify(snippeBody),
       });
 
       const snippeRawText = await snippeResponse.text();
@@ -179,21 +187,22 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       }, 3000);
     }
 
-    // Record transaction
+    // Record transaction — Snippe returns 'reference' or 'id'
+    const snippeRef = snippeData.reference || snippeData.id;
     await pool.query(
       `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
        VALUES ($1, 'payment', $2, 'pending', $3)`,
-      [order.id, order.total_amount, snippeData.id]
+      [order.id, order.total_amount, snippeRef]
     );
 
     res.json({
       success: true,
-      message: snippeData.message || 'Payment initiated',
+      message: snippeData.message || 'Payment initiated — check your phone for USSD prompt',
       payment: {
-        reference: snippeData.id,
+        reference: snippeRef,
         amount: order.total_amount,
         method: method,
-        checkout_url: snippeData.checkout_url || null,
+        checkout_url: snippeData.payment_url || snippeData.checkout_url || null,
       },
     });
   } catch (err) {
