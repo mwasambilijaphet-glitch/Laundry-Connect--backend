@@ -15,7 +15,8 @@ const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const emailFrom = process.env.EMAIL_FROM || 'Laundry Connect <onboarding@resend.dev>';
 
 if (resend) {
-  console.log('Resend email configured (HTTP API — no SMTP ports needed)');
+  console.log('Resend email configured | FROM:', emailFrom);
+  console.log('RESEND_API_KEY length:', resendApiKey?.length, '| starts with:', resendApiKey?.substring(0, 6) + '...');
 } else {
   console.warn('RESEND_API_KEY not set — emails will not be sent. Get a free key at https://resend.com');
 }
@@ -115,6 +116,7 @@ async function sendOTPEmail(email, otp) {
     return false;
   }
   try {
+    console.log('Sending OTP email | from:', emailFrom, '| to:', email);
     const { data, error } = await resend.emails.send({
       from: emailFrom,
       to: email,
@@ -150,6 +152,7 @@ async function sendPasswordResetEmail(email, otp) {
   const frontendUrl = process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app';
   const resetLink = `${frontendUrl}/reset-password?email=${encodeURIComponent(email)}&code=${otp}`;
   try {
+    console.log('Sending reset email | from:', emailFrom, '| to:', email);
     const { data, error } = await resend.emails.send({
       from: emailFrom,
       to: email,
