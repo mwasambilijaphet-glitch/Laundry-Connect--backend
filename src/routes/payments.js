@@ -72,6 +72,17 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       return res.status(400).json({ success: false, message: 'Invalid payment method' });
     }
 
+    // Validate phone for mobile money methods
+    if (['mpesa', 'airtel', 'tigo', 'mobile_money'].includes(method)) {
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ success: false, message: 'Phone number is required for mobile money payments' });
+      }
+      const cleanedPhone = phone.replace(/[\s\-()]/g, '');
+      if (!/^(\+?255|0)\d{9}$/.test(cleanedPhone)) {
+        return res.status(400).json({ success: false, message: 'Invalid Tanzanian phone number' });
+      }
+    }
+
     // Get order
     const orderResult = await pool.query(
       'SELECT * FROM orders WHERE id = $1 AND customer_id = $2 AND payment_status = $3',
@@ -231,6 +242,8 @@ router.post('/webhook', async (req, res, next) => {
         console.error('Webhook rejected: invalid signature');
         return res.status(401).json({ message: 'Invalid signature' });
       }
+    } else if (process.env.NODE_ENV === 'production') {
+      console.warn('WARNING: SNIPPE_WEBHOOK_SECRET not set — webhook signatures are not verified');
     }
 
     const { event, data } = req.body;

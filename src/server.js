@@ -33,9 +33,25 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-// ── CORS — allow all origins ─────────────────────────────
+// ── CORS — whitelist allowed origins ─────────────────────
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app',
+  'https://laundryconnect.app',
+  'https://www.laundryconnect.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+].map(u => u.replace(/\/+$/, ''));
+
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, server-to-server, curl)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn('CORS blocked:', origin);
+      callback(null, false);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -67,8 +83,8 @@ const authLimiter = rateLimit({
 });
 
 const otpLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 10,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS',
@@ -135,9 +151,7 @@ app.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   res.status(statusCode).json({
     success: false,
-    message: process.env.NODE_ENV === 'production'
-      ? 'An internal error occurred. Please try again later.'
-      : err.message || 'Internal server error',
+    message: 'An internal error occurred. Please try again later.',
   });
 });
 
