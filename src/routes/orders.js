@@ -87,7 +87,7 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
       }
     }
 
-    const commissionRate = parseFloat(process.env.PLATFORM_COMMISSION_RATE || '0.10');
+    const commissionRate = parseFloat(process.env.PLATFORM_COMMISSION_RATE || '0.005');
     const platformCommission = Math.round(subtotal * commissionRate);
     const totalAmount = subtotal + deliveryFee;
 
