@@ -20,7 +20,7 @@ router.get('/', async (req, res, next) => {
 
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (s.name ILIKE $${params.length} OR s.region ILIKE $${params.length} OR s.address ILIKE $${params.length})`;
+      query += ` AND (s.name ILIKE $${params.length} OR s.region ILIKE $${params.length} OR s.address ILIKE $${params.length} OR s.description ILIKE $${params.length})`;
     }
 
     if (city) {
