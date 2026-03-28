@@ -12,6 +12,7 @@ const paymentRoutes = require('./routes/payments');
 const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
+const referralRoutes = require('./routes/referrals');
 const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
@@ -138,6 +139,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/owner', ownerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/referrals', referralRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {

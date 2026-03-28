@@ -82,6 +82,13 @@ const en = {
   tooManyOtp: 'Too many OTP requests. Please wait a few minutes.',
   internalError: 'An internal error occurred. Please try again later.',
 
+  // Referrals
+  invalidReferralCode: 'Invalid referral code',
+  alreadyReferred: 'You have already used a referral code',
+  referralCodeNotFound: 'Referral code not found',
+  cannotReferSelf: 'You cannot use your own referral code',
+  referralApplied: (amount) => `Referral applied! You and your friend each earned TZS ${amount.toLocaleString()}`,
+
   // SMS
   smsOtp: (otp) => `Your Laundry Connect verification code is: ${otp}. This code expires in 10 minutes. Do not share it with anyone.`,
   smsReset: (otp) => `Your Laundry Connect password reset code is: ${otp}. This code expires in 10 minutes. If you didn't request this, please ignore.`,
@@ -182,6 +189,13 @@ const sw = {
   tooManyLogins: 'Majaribio mengi ya kuingia. Tafadhali subiri dakika 15.',
   tooManyOtp: 'Maombi mengi ya OTP. Tafadhali subiri dakika chache.',
   internalError: 'Hitilafu ya ndani imetokea. Tafadhali jaribu tena baadaye.',
+
+  // Referrals
+  invalidReferralCode: 'Nambari ya rufaa si sahihi',
+  alreadyReferred: 'Tayari umetumia nambari ya rufaa',
+  referralCodeNotFound: 'Nambari ya rufaa haijapatikana',
+  cannotReferSelf: 'Huwezi kutumia nambari yako ya rufaa',
+  referralApplied: (amount) => `Rufaa imefanikiwa! Wewe na rafiki yako mmepata TZS ${amount.toLocaleString()} kila mmoja`,
 
   // SMS
   smsOtp: (otp) => `Nambari yako ya uthibitisho ya Laundry Connect ni: ${otp}. Nambari hii itaisha baada ya dakika 10. Usimwambie mtu yeyote.`,

@@ -235,11 +235,16 @@ router.post('/register', async (req, res, next) => {
 
     const password_hash = await bcrypt.hash(password, 12);
 
+    // Generate unique referral code
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let referral_code = '';
+    for (let i = 0; i < 6; i++) referral_code += chars.charAt(Math.floor(Math.random() * chars.length));
+
     const result = await pool.query(
-      `INSERT INTO users (full_name, phone, email, password_hash, role, is_verified)
-       VALUES ($1, $2, $3, $4, $5, FALSE)
-       RETURNING id, full_name, phone, email, role`,
-      [full_name, phone, email, password_hash, role]
+      `INSERT INTO users (full_name, phone, email, password_hash, role, is_verified, referral_code)
+       VALUES ($1, $2, $3, $4, $5, FALSE, $6)
+       RETURNING id, full_name, phone, email, role, referral_code`,
+      [full_name, phone, email, password_hash, role, referral_code]
     );
 
     const otp = generateOTP();
@@ -540,7 +545,7 @@ router.post('/refresh', async (req, res, next) => {
 router.get('/me', authenticate, async (req, res, next) => {
   try {
     const result = await pool.query(
-      'SELECT id, full_name, phone, email, role, avatar_url, is_verified, created_at FROM users WHERE id = $1',
+      'SELECT id, full_name, phone, email, role, avatar_url, is_verified, created_at, referral_code, referral_balance FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rows.length === 0) {
