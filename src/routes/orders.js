@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { authenticate, authorize } = require('../middleware/auth');
+const { sendSMS } = require('../services/nextsms');
+const { getTranslator } = require('../i18n');
 
 const router = express.Router();
 
@@ -128,6 +130,30 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
 
     await client.query('COMMIT');
 
+    // Send SMS notifications (fire and forget)
+    try {
+      // Notify customer — order placed
+      const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [req.user.id]);
+      if (customer.rows[0]?.phone) {
+        const shopInfo = await pool.query('SELECT name FROM shops WHERE id = $1', [shop_id]);
+        const t = getTranslator('sw');
+        sendSMS(customer.rows[0].phone, t('smsOrderPlaced', order.order_number, shopInfo.rows[0]?.name || 'Shop'));
+      }
+
+      // Notify shop owner — new order
+      const owner = await pool.query(
+        'SELECT u.phone FROM users u JOIN shops s ON s.owner_id = u.id WHERE s.id = $1',
+        [shop_id]
+      );
+      if (owner.rows[0]?.phone) {
+        const itemCount = orderItems.reduce((sum, i) => sum + i.quantity, 0);
+        const t = getTranslator('sw');
+        sendSMS(owner.rows[0].phone, t('smsNewOrder', order.order_number, itemCount, totalAmount.toLocaleString()));
+      }
+    } catch (smsErr) {
+      console.error('SMS notification error (non-fatal):', smsErr.message);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Order placed! Proceed to payment.',
@@ -234,7 +260,36 @@ router.patch('/:id/status', authenticate, authorize('owner', 'admin'), async (re
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    res.json({ success: true, order: result.rows[0] });
+    const order = result.rows[0];
+
+    // Send SMS notification to customer (fire and forget)
+    try {
+      const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [order.customer_id]);
+      const shop = await pool.query('SELECT name, phone FROM shops WHERE id = $1', [order.shop_id]);
+      const customerPhone = customer.rows[0]?.phone;
+      const shopName = shop.rows[0]?.name || 'Shop';
+      const shopPhone = shop.rows[0]?.phone || '';
+
+      if (customerPhone) {
+        const t = getTranslator('sw');
+        const smsMap = {
+          confirmed: t('smsOrderConfirmed', order.order_number, shopName),
+          picked_up: t('smsOrderPickedUp', order.order_number),
+          washing: t('smsOrderWashing', order.order_number),
+          ready: t('smsOrderReady', order.order_number, shopPhone),
+          delivered: t('smsOrderDelivered', order.order_number),
+          cancelled: t('smsOrderCancelled', order.order_number),
+        };
+
+        if (smsMap[status]) {
+          sendSMS(customerPhone, smsMap[status]);
+        }
+      }
+    } catch (smsErr) {
+      console.error('SMS notification error (non-fatal):', smsErr.message);
+    }
+
+    res.json({ success: true, order });
   } catch (err) {
     next(err);
   }

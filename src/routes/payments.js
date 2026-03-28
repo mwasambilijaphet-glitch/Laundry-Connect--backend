@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { authenticate, authorize } = require('../middleware/auth');
+const { sendSMS } = require('../services/nextsms');
+const { getTranslator } = require('../i18n');
 
 const router = express.Router();
 
@@ -328,6 +330,29 @@ router.post('/webhook', async (req, res, next) => {
            ON CONFLICT DO NOTHING`,
           [metadata.order_id, shopPayout, `payout_${snippeRef}`]
         );
+      }
+
+      // Send SMS notifications for payment received
+      if (order.rows[0]) {
+        try {
+          const o = order.rows[0];
+          const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [o.customer_id]);
+          const shop = await pool.query('SELECT name, owner_id FROM shops WHERE id = $1', [o.shop_id]);
+          const owner = await pool.query('SELECT phone FROM users WHERE id = $1', [shop.rows[0]?.owner_id]);
+          const t = getTranslator('sw');
+
+          // Notify customer — payment received
+          if (customer.rows[0]?.phone) {
+            sendSMS(customer.rows[0].phone, t('smsOrderConfirmed', o.order_number, shop.rows[0]?.name || 'Shop'));
+          }
+          // Notify shop owner — payment received
+          if (owner.rows[0]?.phone) {
+            const method = data.payment_type || 'M-Pesa';
+            sendSMS(owner.rows[0].phone, t('smsPaymentReceived', o.order_number, o.total_amount.toLocaleString(), method));
+          }
+        } catch (smsErr) {
+          console.error('SMS notification error (non-fatal):', smsErr.message);
+        }
       }
 
       console.log('Payment completed for order:', metadata.order_id, '| Commission auto-collected');

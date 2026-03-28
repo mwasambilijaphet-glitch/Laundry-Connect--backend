@@ -93,6 +93,19 @@ const en = {
   smsOtp: (otp) => `Your Laundry Connect verification code is: ${otp}. This code expires in 10 minutes. Do not share it with anyone.`,
   smsReset: (otp) => `Your Laundry Connect password reset code is: ${otp}. This code expires in 10 minutes. If you didn't request this, please ignore.`,
 
+  // SMS Order Notifications — Customer
+  smsOrderPlaced: (orderNo, shopName) => `Laundry Connect: Your order ${orderNo} has been placed at ${shopName}. We'll notify you when it's confirmed.`,
+  smsOrderConfirmed: (orderNo, shopName) => `Laundry Connect: Your order ${orderNo} has been confirmed by ${shopName}! They will pick up your clothes soon.`,
+  smsOrderPickedUp: (orderNo) => `Laundry Connect: Your clothes for order ${orderNo} have been picked up. Washing will begin shortly.`,
+  smsOrderWashing: (orderNo) => `Laundry Connect: Your clothes (${orderNo}) are now being washed! We'll let you know when they're ready.`,
+  smsOrderReady: (orderNo, shopPhone) => `Laundry Connect: Your clothes (${orderNo}) are ready! Contact the shop at ${shopPhone} to arrange collection/delivery.`,
+  smsOrderDelivered: (orderNo) => `Laundry Connect: Order ${orderNo} complete! Thank you for using Laundry Connect. Rate your experience in the app.`,
+  smsOrderCancelled: (orderNo) => `Laundry Connect: Your order ${orderNo} has been cancelled. Contact support if you have questions.`,
+
+  // SMS Order Notifications — Shop Owner
+  smsNewOrder: (orderNo, items, total) => `Laundry Connect: New order ${orderNo}! ${items} items, TZS ${total}. Open the app to confirm.`,
+  smsPaymentReceived: (orderNo, amount, method) => `Laundry Connect: Payment of TZS ${amount} received for order ${orderNo} via ${method}.`,
+
   // Email
   emailOtpSubject: 'Your Laundry Connect Verification Code',
   emailOtpGreeting: 'Welcome! Your verification code is:',
@@ -200,6 +213,19 @@ const sw = {
   // SMS
   smsOtp: (otp) => `Nambari yako ya uthibitisho ya Laundry Connect ni: ${otp}. Nambari hii itaisha baada ya dakika 10. Usimwambie mtu yeyote.`,
   smsReset: (otp) => `Nambari yako ya kubadilisha nywila ya Laundry Connect ni: ${otp}. Nambari hii itaisha baada ya dakika 10. Ikiwa hukuomba, puuza.`,
+
+  // SMS Arifa za Oda — Mteja
+  smsOrderPlaced: (orderNo, shopName) => `Laundry Connect: Oda yako ${orderNo} imewekwa kwa ${shopName}. Tutakujulisha itakapothibitishwa.`,
+  smsOrderConfirmed: (orderNo, shopName) => `Laundry Connect: Oda yako ${orderNo} imethibitishwa na ${shopName}! Watakuja kuchukua nguo zako hivi karibuni.`,
+  smsOrderPickedUp: (orderNo) => `Laundry Connect: Nguo zako za oda ${orderNo} zimechukuliwa. Kufuliwa kutaanza hivi karibuni.`,
+  smsOrderWashing: (orderNo) => `Laundry Connect: Nguo zako (${orderNo}) zinafuliwa sasa! Tutakujulisha zitakapokuwa tayari.`,
+  smsOrderReady: (orderNo, shopPhone) => `Laundry Connect: Nguo zako (${orderNo}) ziko tayari! Wasiliana na duka kwa ${shopPhone} kupanga uchukuaji/upelekaji.`,
+  smsOrderDelivered: (orderNo) => `Laundry Connect: Oda ${orderNo} imekamilika! Asante kwa kutumia Laundry Connect. Tupe maoni kwenye programu.`,
+  smsOrderCancelled: (orderNo) => `Laundry Connect: Oda yako ${orderNo} imeghairiwa. Wasiliana na msaada kama una maswali.`,
+
+  // SMS Arifa za Oda — Mmiliki wa Duka
+  smsNewOrder: (orderNo, items, total) => `Laundry Connect: Oda mpya ${orderNo}! Vitu ${items}, TZS ${total}. Fungua programu kuthibitisha.`,
+  smsPaymentReceived: (orderNo, amount, method) => `Laundry Connect: Malipo ya TZS ${amount} yamepokelewa kwa oda ${orderNo} kupitia ${method}.`,
 
   // Email
   emailOtpSubject: 'Nambari Yako ya Uthibitisho ya Laundry Connect',
