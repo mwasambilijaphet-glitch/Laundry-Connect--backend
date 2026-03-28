@@ -16,7 +16,7 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
   const client = await pool.connect();
 
   try {
-    const { shop_id, items, delivery_address, delivery_zone_id, special_instructions } = req.body;
+    const { shop_id, items, delivery_address, delivery_zone_id, delivery_area, special_instructions } = req.body;
 
     if (!shop_id || !items || items.length === 0 || !delivery_address) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -64,14 +64,30 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
       });
     }
 
-    // Get delivery fee
+    // Get delivery fee — from zone or manual area-based lookup
     let deliveryFee = 0;
     if (delivery_zone_id) {
       const zone = await client.query('SELECT fee FROM delivery_zones WHERE id = $1 AND shop_id = $2', [delivery_zone_id, shop_id]);
       if (zone.rows[0]) deliveryFee = zone.rows[0].fee;
+    } else if (delivery_area) {
+      // Try to match area to a delivery zone by name
+      const zone = await client.query(
+        'SELECT fee FROM delivery_zones WHERE shop_id = $1 AND LOWER(zone_name) LIKE $2 LIMIT 1',
+        [shop_id, `%${delivery_area.toLowerCase()}%`]
+      );
+      if (zone.rows[0]) {
+        deliveryFee = zone.rows[0].fee;
+      } else {
+        // Default delivery fee if area doesn't match any zone
+        const defaultZone = await client.query(
+          'SELECT fee FROM delivery_zones WHERE shop_id = $1 ORDER BY fee DESC LIMIT 1',
+          [shop_id]
+        );
+        deliveryFee = defaultZone.rows[0]?.fee || 3000;
+      }
     }
 
-    const commissionRate = parseFloat(process.env.PLATFORM_COMMISSION_RATE || '0.005');
+    const commissionRate = parseFloat(process.env.PLATFORM_COMMISSION_RATE || '0.10');
     const platformCommission = Math.round(subtotal * commissionRate);
     const totalAmount = subtotal + deliveryFee;
 
