@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { authenticate, authorize } = require('../middleware/auth');
+const { sendSMS } = require('../services/nextsms');
+const { getTranslator } = require('../i18n');
 
 const router = express.Router();
 
@@ -310,15 +312,50 @@ router.post('/webhook', async (req, res, next) => {
 
       const order = await pool.query('SELECT * FROM orders WHERE id = $1', [metadata.order_id]);
       if (order.rows[0]) {
+        const o = order.rows[0];
+
+        // Commission auto-collected (already deducted from mobile payment)
         await pool.query(
-          `INSERT INTO transactions (order_id, type, amount, status)
-           VALUES ($1, 'commission', $2, 'completed')
+          `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
+           VALUES ($1, 'commission', $2, 'completed', $3)
            ON CONFLICT DO NOTHING`,
-          [metadata.order_id, order.rows[0].platform_commission]
+          [metadata.order_id, o.platform_commission, `comm_auto_${snippeRef}`]
+        );
+
+        // Record payout amount owed to shop (total - commission)
+        const shopPayout = o.total_amount - o.platform_commission;
+        await pool.query(
+          `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
+           VALUES ($1, 'payout', $2, 'pending', $3)
+           ON CONFLICT DO NOTHING`,
+          [metadata.order_id, shopPayout, `payout_${snippeRef}`]
         );
       }
 
-      console.log('Payment completed for order:', metadata.order_id);
+      // Send SMS notifications for payment received
+      if (order.rows[0]) {
+        try {
+          const o = order.rows[0];
+          const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [o.customer_id]);
+          const shop = await pool.query('SELECT name, owner_id FROM shops WHERE id = $1', [o.shop_id]);
+          const owner = await pool.query('SELECT phone FROM users WHERE id = $1', [shop.rows[0]?.owner_id]);
+          const t = getTranslator('sw');
+
+          // Notify customer — payment received
+          if (customer.rows[0]?.phone) {
+            sendSMS(customer.rows[0].phone, t('smsOrderConfirmed', o.order_number, shop.rows[0]?.name || 'Shop'));
+          }
+          // Notify shop owner — payment received
+          if (owner.rows[0]?.phone) {
+            const method = data.payment_type || 'M-Pesa';
+            sendSMS(owner.rows[0].phone, t('smsPaymentReceived', o.order_number, o.total_amount.toLocaleString(), method));
+          }
+        } catch (smsErr) {
+          console.error('SMS notification error (non-fatal):', smsErr.message);
+        }
+      }
+
+      console.log('Payment completed for order:', metadata.order_id, '| Commission auto-collected');
     }
 
     if (event === 'payment.failed') {
@@ -339,6 +376,34 @@ router.post('/webhook', async (req, res, next) => {
     res.status(200).json({ received: true });
   } catch (err) {
     console.error('Webhook error:', err.message);
+    res.status(200).json({ received: true });
+  }
+});
+
+// ── POST /api/payments/commission-webhook — Auto-settle commission after M-Pesa collection ─
+router.post('/commission-webhook', async (req, res) => {
+  try {
+    const { event, data } = req.body;
+
+    console.log('Commission webhook received:', event, '| Data:', JSON.stringify(data?.metadata));
+
+    if (event === 'payment.completed' && data?.metadata?.type === 'commission_collection') {
+      const shopId = data.metadata.shop_id;
+
+      // Auto-settle all pending commissions for this shop
+      const result = await pool.query(`
+        UPDATE transactions SET status = 'completed'
+        WHERE type = 'commission' AND status = 'pending'
+        AND order_id IN (SELECT id FROM orders WHERE shop_id = $1 AND payment_status = 'paid')
+        RETURNING id
+      `, [shopId]);
+
+      console.log('Auto-settled', result.rowCount, 'commissions for shop', shopId, 'via M-Pesa');
+    }
+
+    res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('Commission webhook error:', err.message);
     res.status(200).json({ received: true });
   }
 });

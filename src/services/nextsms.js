@@ -128,9 +128,43 @@ function formatPhone(phone) {
   return cleaned;
 }
 
+/**
+ * Send a generic SMS message via NextSMS
+ */
+async function sendSMS(phone, text) {
+  const { apiBase, senderId } = getConfig();
+  const auth = getAuthHeader();
+
+  if (!auth) {
+    console.warn('NEXTSMS_USERNAME/PASSWORD not set — SMS will not be sent');
+    return { success: false, reason: 'credentials_missing' };
+  }
+
+  try {
+    const to = formatPhone(phone);
+    const response = await fetch(`${apiBase}/sms/v1/text/single`, {
+      method: 'POST',
+      headers: {
+        'Authorization': auth,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ from: senderId, to, text }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    console.log('NextSMS sent to:', to, '| Status:', response.status);
+    return { success: response.ok, data };
+  } catch (err) {
+    console.error('NextSMS error:', err.message);
+    return { success: false, reason: err.message };
+  }
+}
+
 module.exports = {
   sendSMSOTP,
   sendWhatsAppOTP,
   sendPasswordResetSMS,
+  sendSMS,
   formatPhone,
 };

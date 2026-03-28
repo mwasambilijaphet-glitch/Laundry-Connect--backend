@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 
 const pool = require('./db/pool');
 const authRoutes = require('./routes/auth');
@@ -13,6 +14,8 @@ const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
 const referralRoutes = require('./routes/referrals');
+const uploadRoutes = require('./routes/upload');
+const whatsappRoutes = require('./routes/whatsapp');
 const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
@@ -38,8 +41,8 @@ app.use(helmet({
 // ── CORS — whitelist allowed origins ─────────────────────
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app',
-  'https://laundryconnect.app',
-  'https://www.laundryconnect.app',
+  'https://laundryconnect.co.tz',
+  'https://www.laundryconnect.co.tz',
   'http://localhost:5173',
   'http://localhost:3000',
 ].map(u => u.replace(/\/+$/, ''));
@@ -102,6 +105,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Serve uploaded files ─────────────────────────────────
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+  maxAge: '30d',
+  immutable: true,
+}));
+
 // ── Routes ────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Laundry Connect API', version: '1.0.0' });
@@ -140,6 +149,8 @@ app.use('/api/owner', ownerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/referrals', referralRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
@@ -175,6 +186,18 @@ async function start() {
     console.log(`Laundry Connect API running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   });
+
+  // Start WhatsApp bot if enabled
+  if (process.env.WHATSAPP_BOT === 'true') {
+    const { startWhatsApp } = require('./services/whatsapp');
+    startWhatsApp().then(() => {
+      console.log('WhatsApp bot starting...');
+    }).catch(err => {
+      console.error('WhatsApp bot failed to start:', err.message);
+    });
+  } else {
+    console.log('WhatsApp bot disabled. Set WHATSAPP_BOT=true to enable.');
+  }
 }
 
 start();

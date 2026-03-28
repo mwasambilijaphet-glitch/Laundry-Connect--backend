@@ -193,6 +193,134 @@ router.post('/balances/:shopId/settle', async (req, res, next) => {
   }
 });
 
+// ── POST /api/admin/balances/:shopId/invoice — Send M-Pesa commission invoice ──
+router.post('/balances/:shopId/invoice', async (req, res, next) => {
+  try {
+    const { shopId } = req.params;
+
+    // Get shop owner phone and owed amount
+    const result = await pool.query(`
+      SELECT
+        s.name as shop_name,
+        u.phone as owner_phone,
+        u.full_name as owner_name,
+        COALESCE(SUM(t.amount), 0) as owed_amount,
+        COUNT(t.id) as pending_count
+      FROM shops s
+      JOIN users u ON s.owner_id = u.id
+      LEFT JOIN orders o ON o.shop_id = s.id AND o.payment_status = 'paid'
+      LEFT JOIN transactions t ON t.order_id = o.id AND t.type = 'commission' AND t.status = 'pending'
+      WHERE s.id = $1
+      GROUP BY s.id, s.name, u.phone, u.full_name
+    `, [shopId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Shop not found' });
+    }
+
+    const shop = result.rows[0];
+    const owedAmount = parseInt(shop.owed_amount);
+
+    if (owedAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'No pending commission to collect' });
+    }
+
+    // Format phone for M-Pesa
+    let phone = shop.owner_phone;
+    if (phone.startsWith('0')) phone = '+255' + phone.substring(1);
+    else if (phone.startsWith('255') && !phone.startsWith('+')) phone = '+' + phone;
+
+    // Try Snippe payment collection (if API key is set)
+    if (process.env.SNIPPE_API_KEY) {
+      const SNIPPE_API_BASE = process.env.SNIPPE_API_URL || 'https://api.snippe.sh/v1';
+      const BACKEND_URL = (process.env.BACKEND_URL || 'https://laundry-connect-backend.onrender.com').replace(/\/+$/, '');
+
+      const collectionBody = {
+        payment_type: 'mobile',
+        details: {
+          amount: owedAmount,
+          currency: 'TZS',
+        },
+        phone_number: phone,
+        customer: {
+          firstname: shop.owner_name.split(' ')[0],
+          lastname: shop.owner_name.split(' ').slice(1).join(' ') || 'Owner',
+          email: `shop${shopId}@laundryconnect.co.tz`,
+        },
+        webhook_url: `${BACKEND_URL}/api/payments/commission-webhook`,
+        metadata: {
+          type: 'commission_collection',
+          shop_id: shopId,
+          pending_count: shop.pending_count,
+        },
+        idempotency_key: `comm_${shopId}_${Date.now()}`,
+      };
+
+      try {
+        const snippeRes = await fetch(`${SNIPPE_API_BASE}/payments`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.SNIPPE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(collectionBody),
+        });
+
+        const snippeData = await snippeRes.json();
+
+        if (snippeRes.ok) {
+          console.log('M-Pesa commission invoice sent:', { shopId, amount: owedAmount, ref: snippeData.id });
+          return res.json({
+            success: true,
+            message: `M-Pesa invoice of ${owedAmount.toLocaleString()} TZS sent to ${shop.owner_name} (${shop.owner_phone})`,
+            method: 'mpesa',
+            reference: snippeData.id || snippeData.reference,
+            amount: owedAmount,
+          });
+        }
+
+        console.error('Snippe commission collection failed:', snippeData);
+      } catch (snippeErr) {
+        console.error('Snippe commission request error:', snippeErr.message);
+      }
+    }
+
+    // Fallback: Send SMS invoice via NextSMS
+    const { sendSMSOTP } = require('../services/nextsms');
+    const smsMessage = `Laundry Connect: Tafadhali lipa kamisheni ya TZS ${owedAmount.toLocaleString()} kwa oda ${shop.pending_count} za fedha taslimu. Lipa kupitia M-Pesa: 0768188065 (Laundry Connect). Asante!`;
+
+    try {
+      const NextSMSModule = require('../services/nextsms');
+      // Direct SMS send for invoice notification
+      const smsResult = await fetch('https://messaging-service.co.tz/api/sms/v1/text/single', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Basic ' + Buffer.from(process.env.NEXTSMS_USERNAME + ':' + process.env.NEXTSMS_PASSWORD).toString('base64'),
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'NEXTSMS',
+          to: phone.replace('+', ''),
+          text: smsMessage,
+        }),
+      });
+      console.log('Commission SMS sent to:', shop.owner_phone);
+    } catch (smsErr) {
+      console.error('SMS invoice error:', smsErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: `SMS invoice sent to ${shop.owner_name} (${shop.owner_phone}) for TZS ${owedAmount.toLocaleString()}`,
+      method: 'sms',
+      amount: owedAmount,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── PATCH /api/admin/settings — Update platform settings ──
 router.patch('/settings', async (req, res, next) => {
   res.json({
