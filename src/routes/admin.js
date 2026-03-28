@@ -10,15 +10,17 @@ router.use(authenticate, authorize('admin'));
 // ── GET /api/admin/dashboard — Platform analytics ─────────
 router.get('/dashboard', async (req, res, next) => {
   try {
-    const [users, shops, orders, revenue] = await Promise.all([
+    const [users, shops, orders, revenue, pendingCommission] = await Promise.all([
       pool.query('SELECT COUNT(*) as total, role FROM users GROUP BY role'),
       pool.query('SELECT COUNT(*) as total, is_approved FROM shops GROUP BY is_approved'),
       pool.query('SELECT COUNT(*) as total, status FROM orders GROUP BY status'),
-      pool.query(`SELECT 
+      pool.query(`SELECT
         COALESCE(SUM(total_amount), 0) as total_revenue,
         COALESCE(SUM(platform_commission), 0) as total_commission,
         COUNT(*) as total_orders
         FROM orders WHERE payment_status = 'paid'`),
+      pool.query(`SELECT COALESCE(SUM(amount), 0) as total_pending
+        FROM transactions WHERE type = 'commission' AND status = 'pending'`),
     ]);
 
     res.json({
@@ -27,7 +29,10 @@ router.get('/dashboard', async (req, res, next) => {
         users: users.rows,
         shops: shops.rows,
         orders: orders.rows,
-        revenue: revenue.rows[0],
+        revenue: {
+          ...revenue.rows[0],
+          pending_commission: pendingCommission.rows[0].total_pending,
+        },
       },
     });
   } catch (err) {
@@ -125,6 +130,64 @@ router.get('/transactions', async (req, res, next) => {
        LIMIT 100`
     );
     res.json({ success: true, transactions: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/admin/balances — Shop owner commission balances ──
+router.get('/balances', async (req, res, next) => {
+  try {
+    // Get pending commission per shop (cash payments where commission not yet collected)
+    const result = await pool.query(`
+      SELECT
+        s.id as shop_id,
+        s.name as shop_name,
+        u.full_name as owner_name,
+        u.phone as owner_phone,
+        u.email as owner_email,
+        COALESCE(SUM(CASE WHEN t.status = 'pending' THEN t.amount ELSE 0 END), 0) as owed_amount,
+        COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount ELSE 0 END), 0) as collected_amount,
+        COUNT(CASE WHEN t.status = 'pending' THEN 1 END) as pending_orders
+      FROM shops s
+      JOIN users u ON s.owner_id = u.id
+      LEFT JOIN orders o ON o.shop_id = s.id AND o.payment_status = 'paid'
+      LEFT JOIN transactions t ON t.order_id = o.id AND t.type = 'commission'
+      GROUP BY s.id, s.name, u.full_name, u.phone, u.email
+      HAVING COALESCE(SUM(CASE WHEN t.status = 'pending' THEN t.amount ELSE 0 END), 0) > 0
+      ORDER BY owed_amount DESC
+    `);
+
+    const totalOwed = result.rows.reduce((sum, r) => sum + parseInt(r.owed_amount), 0);
+
+    res.json({
+      success: true,
+      total_owed: totalOwed,
+      balances: result.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/admin/balances/:shopId/settle — Mark commission as collected ──
+router.post('/balances/:shopId/settle', async (req, res, next) => {
+  try {
+    const { shopId } = req.params;
+
+    // Mark all pending commissions for this shop as completed
+    const result = await pool.query(`
+      UPDATE transactions SET status = 'completed'
+      WHERE type = 'commission' AND status = 'pending'
+      AND order_id IN (SELECT id FROM orders WHERE shop_id = $1 AND payment_status = 'paid')
+      RETURNING id
+    `, [shopId]);
+
+    res.json({
+      success: true,
+      message: `Settled ${result.rowCount} commission(s) for shop ${shopId}`,
+      settled_count: result.rowCount,
+    });
   } catch (err) {
     next(err);
   }
