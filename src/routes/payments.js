@@ -67,7 +67,7 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       return res.status(400).json({ success: false, message: 'order_id and method are required' });
     }
 
-    const validMethods = ['mobile_money', 'mpesa', 'airtel', 'tigo', 'card', 'qr'];
+    const validMethods = ['mobile_money', 'mpesa', 'airtel', 'tigo', 'card', 'qr', 'cash'];
     if (!validMethods.includes(method)) {
       return res.status(400).json({ success: false, message: 'Invalid payment method' });
     }
@@ -92,6 +92,45 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       return res.status(404).json({ success: false, message: 'Order not found or already paid' });
     }
     const order = orderResult.rows[0];
+
+    // ── Cash payment — mark as cash, track commission owed by shop owner ──
+    if (method === 'cash') {
+      const cashRef = `cash_${order.id}_${Date.now()}`;
+
+      // Mark order as paid with cash
+      await pool.query(
+        `UPDATE orders SET payment_status = 'paid', payment_reference = $1, status = 'confirmed', updated_at = NOW()
+         WHERE id = $2`,
+        [cashRef, order.id]
+      );
+
+      // Record the payment transaction
+      await pool.query(
+        `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
+         VALUES ($1, 'payment', $2, 'completed', $3)`,
+        [order.id, order.total_amount, cashRef]
+      );
+
+      // Record commission owed by shop owner
+      await pool.query(
+        `INSERT INTO transactions (order_id, type, amount, status, snippe_reference)
+         VALUES ($1, 'commission', $2, 'pending', $3)`,
+        [order.id, order.platform_commission, `comm_${cashRef}`]
+      );
+
+      console.log('Cash payment recorded:', { order_id: order.id, total: order.total_amount, commission_owed: order.platform_commission });
+
+      return res.json({
+        success: true,
+        message: 'Cash payment recorded. Order confirmed!',
+        payment: {
+          reference: cashRef,
+          amount: order.total_amount,
+          method: 'cash',
+          checkout_url: null,
+        },
+      });
+    }
 
     // Get user details for Snippe
     const userResult = await pool.query('SELECT full_name, email FROM users WHERE id = $1', [req.user.id]);
