@@ -341,11 +341,9 @@ router.post('/webhook', async (req, res, next) => {
           const owner = await pool.query('SELECT phone FROM users WHERE id = $1', [shop.rows[0]?.owner_id]);
           const t = getTranslator('sw');
 
-          // Notify customer — payment received
           if (customer.rows[0]?.phone) {
             sendSMS(customer.rows[0].phone, t('smsOrderConfirmed', o.order_number, shop.rows[0]?.name || 'Shop'));
           }
-          // Notify shop owner — payment received
           if (owner.rows[0]?.phone) {
             const method = data.payment_type || 'M-Pesa';
             sendSMS(owner.rows[0].phone, t('smsPaymentReceived', o.order_number, o.total_amount.toLocaleString(), method));
