@@ -16,7 +16,7 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
   const client = await pool.connect();
 
   try {
-    const { shop_id, items, delivery_address, delivery_zone_id, delivery_area, special_instructions } = req.body;
+    const { shop_id, items, delivery_address, delivery_zone_id, delivery_area, special_instructions, pickup_time_slot, delivery_time_slot } = req.body;
 
     if (!shop_id || !items || items.length === 0 || !delivery_address) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -98,10 +98,10 @@ router.post('/', authenticate, authorize('customer', 'admin'), async (req, res, 
       try {
         const orderNumber = generateOrderNumber();
         const orderResult = await client.query(
-          `INSERT INTO orders (order_number, customer_id, shop_id, subtotal, delivery_fee, platform_commission, total_amount, delivery_address, special_instructions)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `INSERT INTO orders (order_number, customer_id, shop_id, subtotal, delivery_fee, platform_commission, total_amount, delivery_address, special_instructions, pickup_time_slot, delivery_time_slot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING *`,
-          [orderNumber, req.user.id, shop_id, subtotal, deliveryFee, platformCommission, totalAmount, delivery_address, special_instructions || null]
+          [orderNumber, req.user.id, shop_id, subtotal, deliveryFee, platformCommission, totalAmount, delivery_address, special_instructions || null, pickup_time_slot || null, delivery_time_slot || null]
         );
         order = orderResult.rows[0];
         break;
