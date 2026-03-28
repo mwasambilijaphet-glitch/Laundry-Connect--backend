@@ -295,4 +295,64 @@ router.patch('/:id/status', authenticate, authorize('owner', 'admin'), async (re
   }
 });
 
+// ── POST /api/orders/:id/review — Submit a review for a delivered order ──
+router.post('/:id/review', authenticate, authorize('customer', 'admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rating, comment } = req.body;
+
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
+    }
+
+    // Verify this is the customer's order and it's delivered
+    const orderResult = await pool.query(
+      'SELECT * FROM orders WHERE id = $1 AND customer_id = $2',
+      [id, req.user.id]
+    );
+
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = orderResult.rows[0];
+
+    if (order.status !== 'delivered') {
+      return res.status(400).json({ success: false, message: 'Can only review delivered orders' });
+    }
+
+    // Check if already reviewed
+    const existing = await pool.query(
+      'SELECT id FROM reviews WHERE order_id = $1 AND customer_id = $2',
+      [id, req.user.id]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'You have already reviewed this order' });
+    }
+
+    // Create review
+    const review = await pool.query(
+      `INSERT INTO reviews (order_id, customer_id, shop_id, rating, comment)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id, req.user.id, order.shop_id, rating, comment || null]
+    );
+
+    // Update shop rating
+    const ratingResult = await pool.query(
+      'SELECT AVG(rating)::numeric(2,1) as avg_rating, COUNT(*) as count FROM reviews WHERE shop_id = $1',
+      [order.shop_id]
+    );
+
+    await pool.query(
+      'UPDATE shops SET rating_avg = $1, total_reviews = $2 WHERE id = $3',
+      [ratingResult.rows[0].avg_rating, ratingResult.rows[0].count, order.shop_id]
+    );
+
+    res.status(201).json({ success: true, review: review.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
