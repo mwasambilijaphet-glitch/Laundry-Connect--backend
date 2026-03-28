@@ -247,25 +247,20 @@ router.post('/register', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send OTP via email (primary channel)
-    let otpSent = await sendOTPEmail(email, otp);
+    // Send OTP via both email and SMS
+    const [emailSent, smsResult] = await Promise.all([
+      sendOTPEmail(email, otp),
+      sendSMSOTP(phone, otp),
+    ]);
 
-    // Fallback to SMS/WhatsApp if email fails
-    if (!otpSent) {
-      const smsResult = await sendSMSOTP(phone, otp);
-      otpSent = smsResult.success;
-      if (!otpSent) {
-        const waResult = await sendWhatsAppOTP(phone, otp);
-        otpSent = waResult.success;
-      }
-    }
+    const otpSent = emailSent || smsResult.success;
 
     res.status(201).json({
       success: true,
       message: otpSent
-        ? 'Registration successful. Check your email for the verification code.'
+        ? 'Registration successful. Check your phone/email for the verification code.'
         : 'Registration successful. OTP failed to send — contact support.',
-      channel: otpSent ? 'email' : 'failed',
+      channel: emailSent && smsResult.success ? 'both' : emailSent ? 'email' : smsResult.success ? 'sms' : 'failed',
       user: result.rows[0],
     });
   } catch (err) {
@@ -346,23 +341,18 @@ router.post('/resend-otp', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    // Send OTP via email (primary channel)
-    let otpSent = await sendOTPEmail(email, otp);
+    // Send OTP via both email and SMS
+    const phone = userResult.rows[0].phone;
+    const [emailSent, smsResult] = await Promise.all([
+      sendOTPEmail(email, otp),
+      sendSMSOTP(phone, otp),
+    ]);
 
-    // Fallback to SMS/WhatsApp if email fails
-    if (!otpSent) {
-      const phone = userResult.rows[0].phone;
-      const smsResult = await sendSMSOTP(phone, otp);
-      otpSent = smsResult.success;
-      if (!otpSent) {
-        const waResult = await sendWhatsAppOTP(phone, otp);
-        otpSent = waResult.success;
-      }
-    }
+    const otpSent = emailSent || smsResult.success;
 
     res.json({
       success: true,
-      message: otpSent ? 'New OTP sent' : 'Failed to send OTP',
+      message: otpSent ? 'New OTP sent to your phone and email' : 'Failed to send OTP',
     });
   } catch (err) {
     next(err);
@@ -458,17 +448,17 @@ router.post('/forgot-password', async (req, res, next) => {
       [email, otp, expiresAt]
     );
 
-    const emailSent = await sendPasswordResetEmail(email, otp);
-
+    // Send reset code via both email and SMS
     const phone = userResult.rows[0].phone;
-    if (phone) {
-      await sendPasswordResetSMS(phone, otp);
-    }
+    const [emailSent, smsResult] = await Promise.all([
+      sendPasswordResetEmail(email, otp),
+      phone ? sendPasswordResetSMS(phone, otp) : Promise.resolve({ success: false }),
+    ]);
 
     res.json({
       success: true,
-      message: emailSent
-        ? 'Password reset link sent to your email'
+      message: (emailSent || smsResult.success)
+        ? 'Password reset code sent to your email and phone'
         : 'If this email exists, a reset link has been sent',
     });
   } catch (err) {
