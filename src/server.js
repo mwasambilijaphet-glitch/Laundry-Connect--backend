@@ -15,6 +15,7 @@ const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
 const referralRoutes = require('./routes/referrals');
 const uploadRoutes = require('./routes/upload');
+const whatsappRoutes = require('./routes/whatsapp');
 const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
@@ -149,6 +150,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
@@ -184,6 +186,18 @@ async function start() {
     console.log(`Laundry Connect API running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   });
+
+  // Start WhatsApp bot if enabled
+  if (process.env.WHATSAPP_BOT === 'true') {
+    const { startWhatsApp } = require('./services/whatsapp');
+    startWhatsApp().then(() => {
+      console.log('WhatsApp bot starting...');
+    }).catch(err => {
+      console.error('WhatsApp bot failed to start:', err.message);
+    });
+  } else {
+    console.log('WhatsApp bot disabled. Set WHATSAPP_BOT=true to enable.');
+  }
 }
 
 start();
