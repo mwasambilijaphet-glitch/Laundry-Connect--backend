@@ -8,6 +8,8 @@
  * API: https://api.nextsms.co/api
  */
 
+const { getTranslator } = require('../i18n');
+
 function getConfig() {
   return {
     apiBase: process.env.NEXTSMS_API_URL || 'https://api.nextsms.co/api',
@@ -30,7 +32,7 @@ function getAuthHeader() {
 /**
  * Send SMS OTP via NextSMS
  */
-async function sendSMSOTP(phone, otp) {
+async function sendSMSOTP(phone, otp, lang = 'sw') {
   const { apiBase, senderId } = getConfig();
   const auth = getAuthHeader();
 
@@ -51,7 +53,7 @@ async function sendSMSOTP(phone, otp) {
       body: JSON.stringify({
         from: senderId,
         to,
-        text: `Your Laundry Connect verification code is: ${otp}. This code expires in 10 minutes. Do not share it with anyone.`,
+        text: getTranslator(lang)('smsOtp', otp),
       }),
     });
 
@@ -75,7 +77,7 @@ async function sendWhatsAppOTP(phone, otp) {
 /**
  * Send password reset OTP via SMS
  */
-async function sendPasswordResetSMS(phone, otp) {
+async function sendPasswordResetSMS(phone, otp, lang = 'sw') {
   const { apiBase, senderId } = getConfig();
   const auth = getAuthHeader();
 
@@ -95,7 +97,7 @@ async function sendPasswordResetSMS(phone, otp) {
       body: JSON.stringify({
         from: senderId,
         to,
-        text: `Your Laundry Connect password reset code is: ${otp}. This code expires in 10 minutes. If you didn't request this, please ignore.`,
+        text: getTranslator(lang)('smsReset', otp),
       }),
     });
 

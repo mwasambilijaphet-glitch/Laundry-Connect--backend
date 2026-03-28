@@ -12,6 +12,7 @@ const paymentRoutes = require('./routes/payments');
 const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
+const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
 const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
@@ -90,6 +91,9 @@ const otpLimiter = rateLimit({
   skip: (req) => req.method === 'OPTIONS',
   message: { success: false, message: 'Too many OTP requests. Please wait a few minutes.' },
 });
+
+// ── Language detection ───────────────────────────────────
+app.use(languageMiddleware);
 
 // ── Request logger ───────────────────────────────────────
 app.use((req, res, next) => {

@@ -6,6 +6,7 @@ const { Resend } = require('resend');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../services/nextsms');
+const { getTranslator } = require('../i18n');
 
 const router = express.Router();
 
@@ -110,7 +111,8 @@ function clearLoginAttempts(ip, identifier) {
 }
 
 // ── Email senders (via Resend HTTP API) ──────────────────
-async function sendOTPEmail(email, otp) {
+async function sendOTPEmail(email, otp, lang = 'en') {
+  const t = getTranslator(lang);
   if (!resend) {
     console.error('Cannot send OTP email — RESEND_API_KEY not set');
     return false;
@@ -120,15 +122,15 @@ async function sendOTPEmail(email, otp) {
     const { data, error } = await resend.emails.send({
       from: emailFrom,
       to: email,
-      subject: 'Your Laundry Connect Verification Code',
+      subject: t('emailOtpSubject'),
       html: `
         <div style="font-family: sans-serif; max-width: 400px; margin: 0 auto; padding: 20px;">
           <h2 style="color: #16a34a;">Laundry<span style="color: #22c55e;">Connect</span></h2>
-          <p>Karibu! Your verification code is:</p>
+          <p>${t('emailOtpGreeting')}</p>
           <div style="background: #f0fdf4; padding: 20px; text-align: center; border-radius: 12px; margin: 20px 0; border: 1px solid #bbf7d0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1e293b;">${otp}</span>
           </div>
-          <p style="color: #64748b; font-size: 14px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+          <p style="color: #64748b; font-size: 14px;">${t('emailOtpFooter')}</p>
         </div>
       `,
     });
@@ -144,7 +146,8 @@ async function sendOTPEmail(email, otp) {
   }
 }
 
-async function sendPasswordResetEmail(email, otp) {
+async function sendPasswordResetEmail(email, otp, lang = 'en') {
+  const t = getTranslator(lang);
   if (!resend) {
     console.error('Cannot send reset email — RESEND_API_KEY not set');
     return false;
@@ -156,25 +159,25 @@ async function sendPasswordResetEmail(email, otp) {
     const { data, error } = await resend.emails.send({
       from: emailFrom,
       to: email,
-      subject: 'Reset Your Laundry Connect Password',
+      subject: t('emailResetSubject'),
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 30px 20px;">
           <div style="text-align: center; margin-bottom: 24px;">
             <h2 style="color: #16a34a; margin: 0;">Laundry<span style="color: #22c55e;">Connect</span></h2>
           </div>
-          <p style="color: #334155; font-size: 15px;">Habari! You requested a password reset for your account.</p>
-          <p style="color: #334155; font-size: 15px;">Click the button below to set a new password:</p>
+          <p style="color: #334155; font-size: 15px;">${t('emailResetGreeting')}</p>
+          <p style="color: #334155; font-size: 15px;">${t('emailResetInstruction')}</p>
           <div style="text-align: center; margin: 28px 0;">
             <a href="${resetLink}" style="display: inline-block; background: #16a34a; color: #ffffff; padding: 14px 36px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px;">
-              Reset Password
+              ${t('emailResetButton')}
             </a>
           </div>
-          <p style="color: #64748b; font-size: 13px;">Or copy this link into your browser:</p>
+          <p style="color: #64748b; font-size: 13px;">${t('emailResetLinkNote')}</p>
           <p style="color: #16a34a; font-size: 13px; word-break: break-all;">${resetLink}</p>
           <div style="background: #f0fdf4; padding: 14px; border-radius: 10px; margin: 20px 0; border: 1px solid #bbf7d0;">
-            <p style="color: #15803d; font-size: 13px; margin: 0;">Your reset code is: <strong style="letter-spacing: 4px; font-size: 18px;">${otp}</strong></p>
+            <p style="color: #15803d; font-size: 13px; margin: 0;">${t('emailResetCodeLabel')} <strong style="letter-spacing: 4px; font-size: 18px;">${otp}</strong></p>
           </div>
-          <p style="color: #94a3b8; font-size: 12px;">This link expires in 10 minutes. If you didn't request this, your account is safe — just ignore this email.</p>
+          <p style="color: #94a3b8; font-size: 12px;">${t('emailResetFooter')}</p>
         </div>
       `,
     });
@@ -200,26 +203,26 @@ router.post('/register', async (req, res, next) => {
     const role = req.body.role;
 
     if (!full_name || !phone || !email || !password) {
-      return res.status(400).json({ success: false, message: 'All fields are required' });
+      return res.status(400).json({ success: false, message: req.t('allFieldsRequired') });
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email address' });
+      return res.status(400).json({ success: false, message: req.t('invalidEmail') });
     }
 
     if (!isValidPhone(phone)) {
-      return res.status(400).json({ success: false, message: 'Invalid Tanzanian phone number (e.g. 0768188065)' });
+      return res.status(400).json({ success: false, message: req.t('invalidPhone') });
     }
 
     if (!isStrongPassword(password)) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
+        message: req.t('weakPassword'),
       });
     }
 
     if (!['customer', 'owner'].includes(role)) {
-      return res.status(400).json({ success: false, message: 'Invalid role' });
+      return res.status(400).json({ success: false, message: req.t('invalidRole') });
     }
 
     const existing = await pool.query(
@@ -227,7 +230,7 @@ router.post('/register', async (req, res, next) => {
       [email, phone]
     );
     if (existing.rows.length > 0) {
-      return res.status(409).json({ success: false, message: 'Email or phone already registered' });
+      return res.status(409).json({ success: false, message: req.t('alreadyRegistered') });
     }
 
     const password_hash = await bcrypt.hash(password, 12);
@@ -249,8 +252,8 @@ router.post('/register', async (req, res, next) => {
 
     // Send OTP via both email and SMS
     const [emailSent, smsResult] = await Promise.all([
-      sendOTPEmail(email, otp),
-      sendSMSOTP(phone, otp),
+      sendOTPEmail(email, otp, req.lang),
+      sendSMSOTP(phone, otp, req.lang),
     ]);
 
     const otpSent = emailSent || smsResult.success;
@@ -258,8 +261,8 @@ router.post('/register', async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: otpSent
-        ? 'Registration successful. Check your phone/email for the verification code.'
-        : 'Registration successful. OTP failed to send — contact support.',
+        ? req.t('registrationSuccess')
+        : req.t('otpFailed'),
       channel: emailSent && smsResult.success ? 'both' : emailSent ? 'email' : smsResult.success ? 'sms' : 'failed',
       user: result.rows[0],
     });
@@ -275,7 +278,7 @@ router.post('/verify-otp', async (req, res, next) => {
     const otp_code = sanitizeString(req.body.otp_code, 6);
 
     if (!email || !otp_code || otp_code.length !== 6 || !/^\d{6}$/.test(otp_code)) {
-      return res.status(400).json({ success: false, message: 'Invalid OTP format' });
+      return res.status(400).json({ success: false, message: req.t('invalidOtpFormat') });
     }
 
     const result = await pool.query(
@@ -286,7 +289,7 @@ router.post('/verify-otp', async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+      return res.status(400).json({ success: false, message: req.t('invalidOrExpiredOtp') });
     }
 
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [result.rows[0].id]);
@@ -297,7 +300,7 @@ router.post('/verify-otp', async (req, res, next) => {
     );
 
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res.status(404).json({ success: false, message: req.t('userNotFound') });
     }
 
     const user = userResult.rows[0];
@@ -306,7 +309,7 @@ router.post('/verify-otp', async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Email verified successfully',
+      message: req.t('emailVerified'),
       token,
       refreshToken,
       user,
@@ -322,7 +325,7 @@ router.post('/resend-otp', async (req, res, next) => {
     const email = sanitizeString(req.body.email, 254).toLowerCase();
 
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+      return res.status(400).json({ success: false, message: req.t('emailRequired') });
     }
 
     const userResult = await pool.query('SELECT id, phone FROM users WHERE LOWER(email) = $1', [email]);
@@ -344,15 +347,15 @@ router.post('/resend-otp', async (req, res, next) => {
     // Send OTP via both email and SMS
     const phone = userResult.rows[0].phone;
     const [emailSent, smsResult] = await Promise.all([
-      sendOTPEmail(email, otp),
-      sendSMSOTP(phone, otp),
+      sendOTPEmail(email, otp, req.lang),
+      sendSMSOTP(phone, otp, req.lang),
     ]);
 
     const otpSent = emailSent || smsResult.success;
 
     res.json({
       success: true,
-      message: otpSent ? 'New OTP sent to your phone and email' : 'Failed to send OTP',
+      message: otpSent ? req.t('otpSentBoth') : req.t('otpSendFailed'),
     });
   } catch (err) {
     next(err);
@@ -366,14 +369,14 @@ router.post('/login', async (req, res, next) => {
     const password = req.body.password || '';
 
     if (!phone || !password) {
-      return res.status(400).json({ success: false, message: 'Phone and password are required' });
+      return res.status(400).json({ success: false, message: req.t('phonePasswordRequired') });
     }
 
     const lockout = checkLoginLockout(req.ip, phone);
     if (lockout.locked) {
       return res.status(429).json({
         success: false,
-        message: `Account temporarily locked. Try again in ${lockout.remainingMin} minutes.`,
+        message: req.t('accountLocked', lockout.remainingMin),
       });
     }
 
@@ -386,7 +389,7 @@ router.post('/login', async (req, res, next) => {
       // Timing attack protection: always run bcrypt even if user not found
       await bcrypt.compare(password, '$2a$12$000000000000000000000uGEFnHBJcMjRk5E/V5Bh.4HqXGfjW8y');
       recordFailedLogin(req.ip, phone);
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      return res.status(401).json({ success: false, message: req.t('invalidCredentials') });
     }
 
     const user = result.rows[0];
@@ -394,11 +397,11 @@ router.post('/login', async (req, res, next) => {
 
     if (!validPassword) {
       recordFailedLogin(req.ip, phone);
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      return res.status(401).json({ success: false, message: req.t('invalidCredentials') });
     }
 
     if (!user.is_verified) {
-      return res.status(403).json({ success: false, message: 'Please verify your account first' });
+      return res.status(403).json({ success: false, message: req.t('verifyFirst') });
     }
 
     clearLoginAttempts(req.ip, phone);
@@ -430,7 +433,7 @@ router.post('/forgot-password', async (req, res, next) => {
     const email = sanitizeString(req.body.email, 254).toLowerCase();
 
     if (!email || !isValidEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Valid email is required' });
+      return res.status(400).json({ success: false, message: req.t('validEmailRequired') });
     }
 
     const userResult = await pool.query('SELECT id, email, phone FROM users WHERE LOWER(email) = $1', [email]);
@@ -451,15 +454,15 @@ router.post('/forgot-password', async (req, res, next) => {
     // Send reset code via both email and SMS
     const phone = userResult.rows[0].phone;
     const [emailSent, smsResult] = await Promise.all([
-      sendPasswordResetEmail(email, otp),
-      phone ? sendPasswordResetSMS(phone, otp) : Promise.resolve({ success: false }),
+      sendPasswordResetEmail(email, otp, req.lang),
+      phone ? sendPasswordResetSMS(phone, otp, req.lang) : Promise.resolve({ success: false }),
     ]);
 
     res.json({
       success: true,
       message: (emailSent || smsResult.success)
-        ? 'Password reset code sent to your email and phone'
-        : 'If this email exists, a reset link has been sent',
+        ? req.t('resetCodeSent')
+        : req.t('resetLinkSent'),
     });
   } catch (err) {
     next(err);
@@ -474,13 +477,13 @@ router.post('/reset-password', async (req, res, next) => {
     const new_password = req.body.new_password || '';
 
     if (!email || !otp_code || !new_password) {
-      return res.status(400).json({ success: false, message: 'All fields are required' });
+      return res.status(400).json({ success: false, message: req.t('allFieldsRequired') });
     }
 
     if (!isStrongPassword(new_password)) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 8 characters with uppercase, lowercase, and a number',
+        message: req.t('weakPassword'),
       });
     }
 
@@ -492,7 +495,7 @@ router.post('/reset-password', async (req, res, next) => {
     );
 
     if (otpResult.rows.length === 0) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired reset code' });
+      return res.status(400).json({ success: false, message: req.t('invalidResetCode') });
     }
 
     await pool.query('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [otpResult.rows[0].id]);
@@ -502,7 +505,7 @@ router.post('/reset-password', async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Password reset successful. You can now log in with your new password.',
+      message: req.t('passwordResetSuccess'),
     });
   } catch (err) {
     next(err);
@@ -514,14 +517,14 @@ router.post('/refresh', async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {
-      return res.status(400).json({ success: false, message: 'Refresh token required' });
+      return res.status(400).json({ success: false, message: req.t('refreshTokenRequired') });
     }
 
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const result = await pool.query('SELECT id, full_name, email, role FROM users WHERE id = $1', [decoded.id]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res.status(404).json({ success: false, message: req.t('userNotFound') });
     }
 
     const user = result.rows[0];
@@ -529,7 +532,7 @@ router.post('/refresh', async (req, res, next) => {
 
     res.json({ success: true, token });
   } catch (err) {
-    return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+    return res.status(401).json({ success: false, message: req.t('invalidRefreshToken') });
   }
 });
 
@@ -541,7 +544,7 @@ router.get('/me', authenticate, async (req, res, next) => {
       [req.user.id]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res.status(404).json({ success: false, message: req.t('userNotFound') });
     }
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
