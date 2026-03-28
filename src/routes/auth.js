@@ -541,7 +541,7 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
-// ── PUT /api/auth/profile — Update profile (avatar, name) ─
+// ── PUT /api/auth/profile — Update profile (avatar, name, phone, email) ─
 router.put('/profile', authenticate, async (req, res, next) => {
   try {
     const updates = [];
@@ -559,6 +559,33 @@ router.put('/profile', authenticate, async (req, res, next) => {
         updates.push(`full_name = $${idx++}`);
         values.push(name);
       }
+    }
+
+    if (req.body.phone) {
+      const phone = sanitizeString(req.body.phone, 20);
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({ success: false, message: 'Invalid phone number' });
+      }
+      // Check uniqueness
+      const existing = await pool.query('SELECT id FROM users WHERE phone = $1 AND id != $2', [phone, req.user.id]);
+      if (existing.rows.length > 0) {
+        return res.status(409).json({ success: false, message: 'Phone number already in use' });
+      }
+      updates.push(`phone = $${idx++}`);
+      values.push(phone);
+    }
+
+    if (req.body.email) {
+      const email = sanitizeString(req.body.email, 254).toLowerCase();
+      if (!isValidEmail(email)) {
+        return res.status(400).json({ success: false, message: 'Invalid email address' });
+      }
+      const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2', [email, req.user.id]);
+      if (existing.rows.length > 0) {
+        return res.status(409).json({ success: false, message: 'Email already in use' });
+      }
+      updates.push(`email = $${idx++}`);
+      values.push(email);
     }
 
     if (updates.length === 0) {
