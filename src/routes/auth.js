@@ -541,6 +541,43 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
+// ── PUT /api/auth/profile — Update profile (avatar, name) ─
+router.put('/profile', authenticate, async (req, res, next) => {
+  try {
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (req.body.avatar_url !== undefined) {
+      updates.push(`avatar_url = $${idx++}`);
+      values.push(req.body.avatar_url || null);
+    }
+
+    if (req.body.full_name) {
+      const name = sanitizeString(req.body.full_name, 100);
+      if (name) {
+        updates.push(`full_name = $${idx++}`);
+        values.push(name);
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'Nothing to update' });
+    }
+
+    values.push(req.user.id);
+    const result = await pool.query(
+      `UPDATE users SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}
+       RETURNING id, full_name, phone, email, role, avatar_url, is_verified, created_at, referral_code, referral_balance`,
+      values
+    );
+
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /api/auth/me ──────────────────────────────────────
 router.get('/me', authenticate, async (req, res, next) => {
   try {
