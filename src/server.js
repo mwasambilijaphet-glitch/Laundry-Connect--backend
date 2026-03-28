@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 
 const pool = require('./db/pool');
 const authRoutes = require('./routes/auth');
@@ -13,6 +14,7 @@ const ownerRoutes = require('./routes/owner');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
 const referralRoutes = require('./routes/referrals');
+const uploadRoutes = require('./routes/upload');
 const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
@@ -102,6 +104,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Serve uploaded files ─────────────────────────────────
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+  maxAge: '30d',
+  immutable: true,
+}));
+
 // ── Routes ────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Laundry Connect API', version: '1.0.0' });
@@ -140,6 +148,7 @@ app.use('/api/owner', ownerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/referrals', referralRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
