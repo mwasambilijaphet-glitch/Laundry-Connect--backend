@@ -87,6 +87,52 @@ router.get('/dashboard', async (req, res, next) => {
   }
 });
 
+// ── PUT /api/owner/shop — Update shop details ───────────
+router.put('/shop', async (req, res, next) => {
+  try {
+    const shopResult = await pool.query('SELECT id FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No shop found' });
+    }
+    const shopId = shopResult.rows[0].id;
+
+    const { name, description, address, region, phone, operating_hours, photos } = req.body;
+
+    const updates = [];
+    const params = [];
+    let paramIndex = 1;
+
+    if (name) { updates.push(`name = $${paramIndex++}`); params.push(name); }
+    if (description !== undefined) { updates.push(`description = $${paramIndex++}`); params.push(description); }
+    if (address) { updates.push(`address = $${paramIndex++}`); params.push(address); }
+    if (region !== undefined) { updates.push(`region = $${paramIndex++}`); params.push(region); }
+    if (phone !== undefined) { updates.push(`phone = $${paramIndex++}`); params.push(phone); }
+    if (operating_hours) { updates.push(`operating_hours = $${paramIndex++}`); params.push(JSON.stringify(operating_hours)); }
+    if (photos !== undefined) {
+      // Validate URLs
+      const validPhotos = (Array.isArray(photos) ? photos : []).filter(url => {
+        try { new URL(url); return true; } catch { return false; }
+      }).slice(0, 10); // Max 10 photos
+      updates.push(`photos = $${paramIndex++}`);
+      params.push(validPhotos);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    params.push(shopId);
+    const result = await pool.query(
+      `UPDATE shops SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      params
+    );
+
+    res.json({ success: true, message: 'Shop updated', shop: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/orders', async (req, res, next) => {
   try {
     const { status } = req.query;

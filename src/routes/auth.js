@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { Resend } = require('resend');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
-const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../services/briq');
+const { sendSMSOTP, sendWhatsAppOTP, sendPasswordResetSMS } = require('../services/nextsms');
 
 const router = express.Router();
 
