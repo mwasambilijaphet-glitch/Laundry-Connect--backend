@@ -285,26 +285,12 @@ router.post('/balances/:shopId/invoice', async (req, res, next) => {
       }
     }
 
-    // Fallback: Send SMS invoice via NextSMS
-    const { sendSMSOTP } = require('../services/nextsms');
+    // Send SMS invoice via NextSMS
+    const { sendSMS } = require('../services/nextsms');
     const smsMessage = `Laundry Connect: Tafadhali lipa kamisheni ya TZS ${owedAmount.toLocaleString()} kwa oda ${shop.pending_count} za fedha taslimu. Lipa kupitia M-Pesa: 0768188065 (Laundry Connect). Asante!`;
 
     try {
-      const NextSMSModule = require('../services/nextsms');
-      // Direct SMS send for invoice notification
-      const smsResult = await fetch('https://messaging-service.co.tz/api/sms/v1/text/single', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Basic ' + Buffer.from(process.env.NEXTSMS_USERNAME + ':' + process.env.NEXTSMS_PASSWORD).toString('base64'),
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'NEXTSMS',
-          to: phone.replace('+', ''),
-          text: smsMessage,
-        }),
-      });
+      await sendSMS(phone, smsMessage);
       console.log('Commission SMS sent to:', shop.owner_phone);
     } catch (smsErr) {
       console.error('SMS invoice error:', smsErr.message);
