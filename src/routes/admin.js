@@ -245,7 +245,7 @@ router.post('/balances/:shopId/invoice', async (req, res, next) => {
         customer: {
           firstname: shop.owner_name.split(' ')[0],
           lastname: shop.owner_name.split(' ').slice(1).join(' ') || 'Owner',
-          email: `shop${shopId}@laundryconnect.app`,
+          email: `shop${shopId}@laundryconnect.co.tz`,
         },
         webhook_url: `${BACKEND_URL}/api/payments/commission-webhook`,
         metadata: {

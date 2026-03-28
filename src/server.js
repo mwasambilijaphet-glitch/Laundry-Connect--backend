@@ -40,8 +40,8 @@ app.use(helmet({
 // ── CORS — whitelist allowed origins ─────────────────────
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app',
-  'https://laundryconnect.app',
-  'https://www.laundryconnect.app',
+  'https://laundryconnect.co.tz',
+  'https://www.laundryconnect.co.tz',
   'http://localhost:5173',
   'http://localhost:3000',
 ].map(u => u.replace(/\/+$/, ''));
