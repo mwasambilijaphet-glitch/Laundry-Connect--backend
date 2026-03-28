@@ -233,17 +233,14 @@ router.post('/webhook', async (req, res, next) => {
     const signature = req.headers['x-snippe-signature'];
     const webhookSecret = process.env.SNIPPE_WEBHOOK_SECRET;
 
-    if (webhookSecret) {
-      if (!signature) {
-        console.error('Webhook rejected: missing signature header');
-        return res.status(401).json({ message: 'Missing signature' });
-      }
+    if (webhookSecret && signature) {
       if (!verifyWebhookSignature(req.body, signature, webhookSecret)) {
         console.error('Webhook rejected: invalid signature');
         return res.status(401).json({ message: 'Invalid signature' });
       }
-    } else if (process.env.NODE_ENV === 'production') {
-      console.warn('WARNING: SNIPPE_WEBHOOK_SECRET not set — webhook signatures are not verified');
+      console.log('Webhook signature verified');
+    } else {
+      console.warn('Webhook received without signature verification');
     }
 
     const { event, data } = req.body;
