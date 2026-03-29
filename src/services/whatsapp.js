@@ -95,8 +95,8 @@ async function startWhatsApp() {
 
     return sock;
   } catch (err) {
-    console.error('[WhatsApp] Failed to start:', err);
-    connectionStatus = 'disconnected';
+    console.error('[WhatsApp] Failed to start:', err.message, err.stack);
+    connectionStatus = 'error: ' + err.message;
   }
 }
 
