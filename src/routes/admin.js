@@ -84,7 +84,7 @@ router.patch('/shops/:id/approve', async (req, res, next) => {
 router.get('/users', async (req, res, next) => {
   try {
     const { role } = req.query;
-    let query = 'SELECT id, full_name, phone, email, role, is_verified, created_at FROM users';
+    let query = 'SELECT id, full_name, phone, email, role, is_verified, COALESCE(status, \'active\') as status, created_at FROM users';
     const params = [];
 
     if (role) {
@@ -104,11 +104,14 @@ router.get('/users', async (req, res, next) => {
 router.patch('/users/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { full_name, phone, email, role, is_verified } = req.body;
+    const { full_name, phone, email, role, is_verified, status } = req.body;
 
-    // Prevent admin from demoting themselves
+    // Prevent admin from demoting/blocking themselves
     if (parseInt(id) === req.user.id && role && role !== 'admin') {
       return res.status(400).json({ success: false, message: 'Cannot change your own role' });
+    }
+    if (parseInt(id) === req.user.id && status && status !== 'active') {
+      return res.status(400).json({ success: false, message: 'Cannot block your own account' });
     }
 
     const fields = [];
@@ -120,6 +123,7 @@ router.patch('/users/:id', async (req, res, next) => {
     if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email); }
     if (role !== undefined) { fields.push(`role = $${idx++}`); values.push(role); }
     if (is_verified !== undefined) { fields.push(`is_verified = $${idx++}`); values.push(is_verified); }
+    if (status !== undefined) { fields.push(`status = $${idx++}`); values.push(status); }
 
     if (fields.length === 0) {
       return res.status(400).json({ success: false, message: 'No fields to update' });
@@ -127,7 +131,7 @@ router.patch('/users/:id', async (req, res, next) => {
 
     values.push(id);
     const result = await pool.query(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, full_name, phone, email, role, is_verified, created_at`,
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, full_name, phone, email, role, is_verified, status, created_at`,
       values
     );
 
