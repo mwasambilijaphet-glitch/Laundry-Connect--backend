@@ -168,4 +168,76 @@ router.get('/orders', async (req, res, next) => {
     next(err);
   }
 });
+
+// ── GET /api/owner/services — Get owner's shop services ──
+router.get('/services', async (req, res, next) => {
+  try {
+    const shopResult = await pool.query('SELECT id FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.json({ success: true, services: [] });
+    }
+    const result = await pool.query(
+      'SELECT * FROM services WHERE shop_id = $1 AND is_active = TRUE ORDER BY clothing_type, price',
+      [shopResult.rows[0].id]
+    );
+    res.json({ success: true, services: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/owner/services — Add or update a service ───
+router.post('/services', async (req, res, next) => {
+  try {
+    const { clothing_type, service_type, price } = req.body;
+    if (!clothing_type || !service_type || !price) {
+      return res.status(400).json({ success: false, message: 'clothing_type, service_type, and price are required' });
+    }
+
+    const shopResult = await pool.query('SELECT id FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Create a shop first' });
+    }
+    const shopId = shopResult.rows[0].id;
+
+    // Upsert: update price if service exists, otherwise insert
+    const result = await pool.query(
+      `INSERT INTO services (shop_id, clothing_type, service_type, price)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (shop_id, clothing_type, service_type)
+       DO UPDATE SET price = $4, is_active = TRUE
+       RETURNING *`,
+      [shopId, clothing_type, service_type, price]
+    );
+
+    const services = await pool.query(
+      'SELECT * FROM services WHERE shop_id = $1 AND is_active = TRUE ORDER BY clothing_type, price',
+      [shopId]
+    );
+
+    res.json({ success: true, service: result.rows[0], services: services.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /api/owner/services/:id — Remove a service ────
+router.delete('/services/:id', async (req, res, next) => {
+  try {
+    const shopResult = await pool.query('SELECT id FROM shops WHERE owner_id = $1', [req.user.id]);
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No shop found' });
+    }
+
+    await pool.query(
+      'UPDATE services SET is_active = FALSE WHERE id = $1 AND shop_id = $2',
+      [req.params.id, shopResult.rows[0].id]
+    );
+
+    res.json({ success: true, message: 'Service removed' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
