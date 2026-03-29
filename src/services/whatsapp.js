@@ -9,7 +9,8 @@ const crypto = require('crypto');
 
 let sock = null;
 let qrCode = null;
-let connectionStatus = 'disconnected'; // disconnected | connecting | connected
+let connectionStatus = 'disconnected';
+let reconnectAttempts = 0;
 const sessions = new Map(); // phone -> conversation state
 
 // ── Bot conversation states ─────────────────────────────
@@ -53,14 +54,23 @@ async function startWhatsApp() {
       }
 
       if (connection === 'close') {
-        connectionStatus = 'disconnected';
         const reason = lastDisconnect?.error?.output?.statusCode;
         console.log('[WhatsApp] Disconnected. Reason:', reason);
 
+        // Track reconnect attempts to avoid infinite loop
+        reconnectAttempts++;
+        if (reconnectAttempts > 3) {
+          connectionStatus = 'failed — WhatsApp blocks cloud server IPs. Run Baileys on a VPS or local machine instead.';
+          console.error('[WhatsApp] Giving up after 3 failed attempts. Baileys cannot run on shared hosting (Render). Use a VPS with a dedicated IP.');
+          return;
+        }
+
         if (reason !== DisconnectReason.loggedOut) {
-          console.log('[WhatsApp] Reconnecting...');
-          setTimeout(startWhatsApp, 5000);
+          connectionStatus = `reconnecting (attempt ${reconnectAttempts}/3)`;
+          console.log(`[WhatsApp] Reconnecting (${reconnectAttempts}/3)...`);
+          setTimeout(startWhatsApp, 5000 * reconnectAttempts);
         } else {
+          connectionStatus = 'logged out';
           console.log('[WhatsApp] Logged out. Delete whatsapp-auth folder and restart to re-link.');
         }
       }
@@ -68,6 +78,7 @@ async function startWhatsApp() {
       if (connection === 'open') {
         connectionStatus = 'connected';
         qrCode = null;
+        reconnectAttempts = 0;
         console.log('[WhatsApp] Connected successfully!');
       }
     });
