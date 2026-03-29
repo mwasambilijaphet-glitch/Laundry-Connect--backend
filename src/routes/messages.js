@@ -189,15 +189,15 @@ router.get('/:conversationId', authenticate, async (req, res, next) => {
 router.post('/:conversationId', authenticate, async (req, res, next) => {
   try {
     const { conversationId } = req.params;
-    const { content, message_type } = req.body;
+    const { content, message_type, attachment_url } = req.body;
     const userId = req.user.id;
     const role = req.user.role;
 
-    if (!content || content.trim().length === 0) {
+    if ((!content || content.trim().length === 0) && !attachment_url) {
       return res.status(400).json({ success: false, message: 'Message content is required' });
     }
 
-    if (content.length > 2000) {
+    if (content && content.length > 2000) {
       return res.status(400).json({ success: false, message: 'Message too long (max 2000 chars)' });
     }
 
@@ -225,9 +225,9 @@ router.post('/:conversationId', authenticate, async (req, res, next) => {
 
     // Insert message
     const msg = await pool.query(
-      `INSERT INTO messages (conversation_id, sender_id, sender_role, content, message_type)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [conversationId, userId, senderRole, content.trim(), message_type || 'text']
+      `INSERT INTO messages (conversation_id, sender_id, sender_role, content, message_type, attachment_url)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [conversationId, userId, senderRole, content ? content.trim() : '', message_type || 'text', attachment_url || null]
     );
 
     // Update conversation last_message

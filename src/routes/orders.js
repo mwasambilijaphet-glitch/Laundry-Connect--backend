@@ -262,6 +262,33 @@ router.patch('/:id/status', authenticate, authorize('owner', 'admin'), async (re
 
     const order = result.rows[0];
 
+    // Create in-app notification for customer
+    try {
+      const shop = await pool.query('SELECT name FROM shops WHERE id = $1', [order.shop_id]);
+      const shopName = shop.rows[0]?.name || 'Shop';
+      const statusLabels = {
+        confirmed: 'Order Confirmed',
+        picked_up: 'Clothes Picked Up',
+        washing: 'Washing In Progress',
+        ready: 'Ready for Delivery',
+        out_for_delivery: 'Out for Delivery',
+        delivered: 'Order Delivered',
+        cancelled: 'Order Cancelled',
+      };
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, message, data) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          order.customer_id,
+          'order_status',
+          statusLabels[status] || 'Order Update',
+          `Your order ${order.order_number} at ${shopName} has been updated to: ${statusLabels[status] || status}`,
+          JSON.stringify({ order_id: order.id, order_number: order.order_number, status }),
+        ]
+      );
+    } catch (notifErr) {
+      console.error('Failed to create notification:', notifErr);
+    }
+
     // Send SMS notification to customer (fire and forget)
     try {
       const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [order.customer_id]);
