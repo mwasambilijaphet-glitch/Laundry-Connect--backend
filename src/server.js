@@ -16,6 +16,7 @@ const messageRoutes = require('./routes/messages');
 const referralRoutes = require('./routes/referrals');
 const uploadRoutes = require('./routes/upload');
 const whatsappRoutes = require('./routes/whatsapp');
+const notificationRoutes = require('./routes/notifications');
 const { languageMiddleware } = require('./i18n');
 
 // ── Startup validation ──────────────────────────────────
@@ -229,6 +230,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ── 404 handler ──────────────────────────────────────────
 app.use((req, res) => {
