@@ -3,8 +3,7 @@
  * Uses Baileys (free, no Twilio/Meta API needed)
  * Scan QR code with your phone to connect
  */
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pool = require('../db/pool');
 const crypto = require('crypto');
 
@@ -39,7 +38,6 @@ async function startWhatsApp() {
 
     sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
       browser: ['Laundry Connect', 'Bot', '1.0'],
     });
 
@@ -51,8 +49,7 @@ async function startWhatsApp() {
       if (qr) {
         qrCode = qr;
         connectionStatus = 'connecting';
-        console.log('[WhatsApp] QR Code generated — scan with your phone');
-        qrcode.generate(qr, { small: true });
+        console.log('[WhatsApp] QR Code generated — visit /api/whatsapp/status to scan');
       }
 
       if (connection === 'close') {
