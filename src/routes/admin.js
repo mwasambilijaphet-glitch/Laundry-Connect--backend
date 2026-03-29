@@ -100,6 +100,77 @@ router.get('/users', async (req, res, next) => {
   }
 });
 
+// ── PATCH /api/admin/users/:id — Edit user details ───────
+router.patch('/users/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { full_name, phone, email, role, is_verified } = req.body;
+
+    // Prevent admin from demoting themselves
+    if (parseInt(id) === req.user.id && role && role !== 'admin') {
+      return res.status(400).json({ success: false, message: 'Cannot change your own role' });
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    if (full_name !== undefined) { fields.push(`full_name = $${idx++}`); values.push(full_name); }
+    if (phone !== undefined) { fields.push(`phone = $${idx++}`); values.push(phone); }
+    if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email); }
+    if (role !== undefined) { fields.push(`role = $${idx++}`); values.push(role); }
+    if (is_verified !== undefined) { fields.push(`is_verified = $${idx++}`); values.push(is_verified); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, full_name, phone, email, role, is_verified, created_at`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /api/admin/users/:id — Remove user ────────────
+router.delete('/users/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent admin from deleting themselves
+    if (parseInt(id) === req.user.id) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+    }
+
+    // Check if user exists
+    const user = await pool.query('SELECT id, full_name, role FROM users WHERE id = $1', [id]);
+    if (user.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Delete user's related data first (orders, shops, etc.)
+    await pool.query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)', [id]);
+    await pool.query('DELETE FROM transactions WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)', [id]);
+    await pool.query('DELETE FROM orders WHERE customer_id = $1', [id]);
+    await pool.query('DELETE FROM services WHERE shop_id IN (SELECT id FROM shops WHERE owner_id = $1)', [id]);
+    await pool.query('DELETE FROM shops WHERE owner_id = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+
+    res.json({ success: true, message: `User ${user.rows[0].full_name} deleted` });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /api/admin/orders — All platform orders ───────────
 router.get('/orders', async (req, res, next) => {
   try {
