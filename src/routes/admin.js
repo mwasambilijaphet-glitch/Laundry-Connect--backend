@@ -40,6 +40,55 @@ router.get('/dashboard', async (req, res, next) => {
   }
 });
 
+// ── GET /api/admin/shops — All shops (with filters) ──────
+router.get('/shops', async (req, res, next) => {
+  try {
+    const { status } = req.query; // 'pending', 'approved', 'all'
+    let where = '';
+    if (status === 'pending') where = 'WHERE s.is_approved = FALSE';
+    else if (status === 'approved') where = 'WHERE s.is_approved = TRUE';
+
+    const result = await pool.query(
+      `SELECT s.*, u.full_name as owner_name, u.phone as owner_phone, u.email as owner_email,
+              (SELECT COUNT(*) FROM services WHERE shop_id = s.id AND is_active = TRUE) as service_count
+       FROM shops s JOIN users u ON s.owner_id = u.id
+       ${where}
+       ORDER BY s.created_at DESC`
+    );
+    res.json({ success: true, shops: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/admin/shops/:id — Shop detail with services ──
+router.get('/shops/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const shopResult = await pool.query(
+      `SELECT s.*, u.full_name as owner_name, u.phone as owner_phone, u.email as owner_email
+       FROM shops s JOIN users u ON s.owner_id = u.id
+       WHERE s.id = $1`,
+      [id]
+    );
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Shop not found' });
+    }
+
+    const services = await pool.query(
+      'SELECT * FROM services WHERE shop_id = $1 AND is_active = TRUE ORDER BY clothing_type, price',
+      [id]
+    );
+
+    res.json({
+      success: true,
+      shop: { ...shopResult.rows[0], services: services.rows },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /api/admin/shops/pending — Shops awaiting approval ─
 router.get('/shops/pending', async (req, res, next) => {
   try {

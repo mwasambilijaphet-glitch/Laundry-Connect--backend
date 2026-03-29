@@ -96,7 +96,7 @@ router.get('/:id', async (req, res, next) => {
 // ── POST /api/shops — Create shop (owner only) ───────────
 router.post('/', authenticate, authorize('owner'), async (req, res, next) => {
   try {
-    const { name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, photos, services } = req.body;
+    const { name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, tin_document, photos, services } = req.body;
 
     if (!name || !address || !phone) {
       return res.status(400).json({ success: false, message: 'Name, address, and phone are required' });
@@ -113,11 +113,17 @@ router.post('/', authenticate, authorize('owner'), async (req, res, next) => {
       try { new URL(url); return true; } catch { return false; }
     }).slice(0, 10);
 
+    // Validate tin_document URL if provided
+    let validTinDoc = null;
+    if (tin_document) {
+      try { new URL(tin_document); validTinDoc = tin_document; } catch {}
+    }
+
     const result = await pool.query(
-      `INSERT INTO shops (owner_id, name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, photos)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO shops (owner_id, name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, tin_document, photos)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [req.user.id, name, description, address, latitude, longitude, region, phone, JSON.stringify(operating_hours || {}), tin_number || null, validPhotos]
+      [req.user.id, name, description, address, latitude, longitude, region, phone, JSON.stringify(operating_hours || {}), tin_number || null, validTinDoc, validPhotos]
     );
 
     const shopId = result.rows[0].id;
