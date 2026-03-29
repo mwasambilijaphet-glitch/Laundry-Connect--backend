@@ -13,7 +13,7 @@ const router = express.Router();
 // ── Email via Resend HTTP API (works on Render — no SMTP ports needed) ──
 const resendApiKey = process.env.RESEND_API_KEY;
 const resend = resendApiKey ? new Resend(resendApiKey) : null;
-const emailFrom = process.env.EMAIL_FROM || 'Laundry Connect <info@laundryconnect.co.tz>';
+const emailFrom = process.env.EMAIL_FROM || 'Laundry Connect <onboarding@resend.dev>';
 
 if (resend) {
   console.log('Resend email configured | FROM:', emailFrom);
