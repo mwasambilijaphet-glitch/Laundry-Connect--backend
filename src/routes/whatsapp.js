@@ -20,8 +20,8 @@ router.get('/status', authenticate, authorize('admin'), (req, res) => {
   });
 });
 
-// ── GET /api/whatsapp/qr-page — Scannable QR code page (admin only) ──
-router.get('/qr-page', authenticate, authorize('admin'), (req, res) => {
+// ── GET /api/whatsapp/qr-page — Scannable QR code page (public — just a QR image) ──
+router.get('/qr-page', (req, res) => {
   const qr = getQR();
   const status = getStatus();
 
