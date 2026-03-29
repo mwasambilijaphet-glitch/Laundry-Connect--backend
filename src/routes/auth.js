@@ -226,11 +226,19 @@ router.post('/register', async (req, res, next) => {
     }
 
     const existing = await pool.query(
-      'SELECT id FROM users WHERE LOWER(email) = $1 OR phone = $2',
+      'SELECT id, is_verified FROM users WHERE LOWER(email) = $1 OR phone = $2',
       [email, phone]
     );
     if (existing.rows.length > 0) {
-      return res.status(409).json({ success: false, message: req.t('alreadyRegistered') });
+      const existingUser = existing.rows[0];
+
+      // If user exists but never verified, delete and let them re-register
+      if (!existingUser.is_verified) {
+        await pool.query('DELETE FROM otp_codes WHERE email = $1', [email]);
+        await pool.query('DELETE FROM users WHERE id = $1', [existingUser.id]);
+      } else {
+        return res.status(409).json({ success: false, message: req.t('alreadyRegistered') });
+      }
     }
 
     const password_hash = await bcrypt.hash(password, 12);
