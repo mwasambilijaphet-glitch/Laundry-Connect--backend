@@ -140,6 +140,49 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// ── Temporary public SMS test (remove after debugging) ──
+app.get('/api/debug/test-sms/:phone', async (req, res) => {
+  try {
+    const phone = req.params.phone;
+    const { formatPhone } = require('./services/nextsms');
+    const formatted = formatPhone(phone);
+
+    const apiBase = process.env.NEXTSMS_API_URL || 'https://messaging-service.co.tz';
+    const username = process.env.NEXTSMS_USERNAME;
+    const password = process.env.NEXTSMS_PASSWORD;
+    const senderId = process.env.NEXTSMS_SENDER_ID || 'NEXTSMS';
+
+    if (!username || !password) {
+      return res.json({ success: false, error: 'NEXTSMS credentials not set', username: !!username, password: !!password });
+    }
+
+    const auth = 'Basic ' + Buffer.from(`${username}:${password}`, 'binary').toString('base64');
+    const url = `${apiBase}/api/sms/v1/text/single`;
+    const body = { from: senderId, to: formatted, text: 'Laundry Connect: Test SMS working!' };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': auth, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    let data;
+    const txt = await response.text();
+    try { data = JSON.parse(txt); } catch { data = txt; }
+
+    res.json({
+      url_called: url,
+      http_status: response.status,
+      request: body,
+      response: data,
+      env_override: process.env.NEXTSMS_API_URL || 'none (using default)',
+      username_hint: username ? username.substring(0, 3) + '***' : 'NOT SET',
+    });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', otpLimiter);
