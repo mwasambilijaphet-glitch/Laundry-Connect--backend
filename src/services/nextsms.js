@@ -4,15 +4,15 @@
  * Sends SMS via NextSMS (nextsms.co.tz) — Tanzania's SMS gateway.
  * Customer Number: 208961
  *
- * Docs: https://nextsms.io/api/developer-guide.html
- * API: https://api.nextsms.co/api
+ * Official API base: https://messaging-service.co.tz/
+ * Docs: https://github.com/nextsms/node-nextsms
  */
 
 const { getTranslator } = require('../i18n');
 
 function getConfig() {
   return {
-    apiBase: process.env.NEXTSMS_API_URL || 'https://api.nextsms.co/api',
+    apiBase: process.env.NEXTSMS_API_URL || 'https://messaging-service.co.tz',
     username: process.env.NEXTSMS_USERNAME,
     password: process.env.NEXTSMS_PASSWORD,
     senderId: process.env.NEXTSMS_SENDER_ID || 'NEXTSMS',
@@ -25,7 +25,7 @@ function getConfig() {
 function getAuthHeader() {
   const { username, password } = getConfig();
   if (!username || !password) return null;
-  const encoded = Buffer.from(`${username}:${password}`).toString('base64');
+  const encoded = Buffer.from(`${username}:${password}`, 'binary').toString('base64');
   return `Basic ${encoded}`;
 }
 
@@ -43,7 +43,7 @@ async function sendSMSOTP(phone, otp, lang = 'sw') {
 
   try {
     const to = formatPhone(phone);
-    const response = await fetch(`${apiBase}/sms/v1/text/single`, {
+    const response = await fetch(`${apiBase}/api/sms/v1/text/single`, {
       method: 'POST',
       headers: {
         'Authorization': auth,
@@ -87,7 +87,7 @@ async function sendPasswordResetSMS(phone, otp, lang = 'sw') {
 
   try {
     const to = formatPhone(phone);
-    const response = await fetch(`${apiBase}/sms/v1/text/single`, {
+    const response = await fetch(`${apiBase}/api/sms/v1/text/single`, {
       method: 'POST',
       headers: {
         'Authorization': auth,
@@ -142,7 +142,7 @@ async function sendSMS(phone, text) {
 
   try {
     const to = formatPhone(phone);
-    const response = await fetch(`${apiBase}/sms/v1/text/single`, {
+    const response = await fetch(`${apiBase}/api/sms/v1/text/single`, {
       method: 'POST',
       headers: {
         'Authorization': auth,
