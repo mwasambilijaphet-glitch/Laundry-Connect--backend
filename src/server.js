@@ -183,6 +183,37 @@ app.get('/api/debug/test-sms/:phone', async (req, res) => {
   }
 });
 
+// ── Temporary public email test ──
+app.get('/api/debug/test-email/:email', async (req, res) => {
+  try {
+    const email = req.params.email;
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.EMAIL_FROM || 'Laundry Connect <info@laundryconnect.app>';
+
+    if (!apiKey) return res.json({ success: false, error: 'RESEND_API_KEY not set' });
+
+    const { Resend } = require('resend');
+    const resend = new Resend(apiKey);
+    const { data, error } = await resend.emails.send({
+      from,
+      to: email,
+      subject: 'Laundry Connect — Test Email',
+      html: '<h2>Test email works!</h2><p>Your Laundry Connect email is configured correctly.</p>',
+    });
+
+    res.json({
+      success: !error,
+      from,
+      to: email,
+      email_from_env: process.env.EMAIL_FROM || '(using default: laundryconnect.app)',
+      resend_response: data || null,
+      resend_error: error || null,
+    });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', otpLimiter);
