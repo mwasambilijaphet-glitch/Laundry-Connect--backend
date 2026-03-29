@@ -96,10 +96,10 @@ router.get('/:id', async (req, res, next) => {
 // ── POST /api/shops — Create shop (owner only) ───────────
 router.post('/', authenticate, authorize('owner'), async (req, res, next) => {
   try {
-    const { name, description, address, latitude, longitude, region, phone, operating_hours } = req.body;
+    const { name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, photos, services } = req.body;
 
-    if (!name || !address) {
-      return res.status(400).json({ success: false, message: 'Name and address are required' });
+    if (!name || !address || !phone) {
+      return res.status(400).json({ success: false, message: 'Name, address, and phone are required' });
     }
 
     // Check if owner already has a shop
@@ -108,12 +108,34 @@ router.post('/', authenticate, authorize('owner'), async (req, res, next) => {
       return res.status(409).json({ success: false, message: 'You already have a shop registered' });
     }
 
+    // Validate photos if provided
+    const validPhotos = (Array.isArray(photos) ? photos : []).filter(url => {
+      try { new URL(url); return true; } catch { return false; }
+    }).slice(0, 10);
+
     const result = await pool.query(
-      `INSERT INTO shops (owner_id, name, description, address, latitude, longitude, region, phone, operating_hours)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO shops (owner_id, name, description, address, latitude, longitude, region, phone, operating_hours, tin_number, photos)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [req.user.id, name, description, address, latitude, longitude, region, phone, JSON.stringify(operating_hours || {})]
+      [req.user.id, name, description, address, latitude, longitude, region, phone, JSON.stringify(operating_hours || {}), tin_number || null, validPhotos]
     );
+
+    const shopId = result.rows[0].id;
+
+    // Insert services if provided during registration
+    if (Array.isArray(services) && services.length > 0) {
+      for (const svc of services) {
+        if (svc.clothing_type && svc.service_type && svc.price) {
+          await pool.query(
+            `INSERT INTO services (shop_id, clothing_type, service_type, price)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (shop_id, clothing_type, service_type)
+             DO UPDATE SET price = $4, is_active = TRUE`,
+            [shopId, svc.clothing_type, svc.service_type, parseInt(svc.price)]
+          );
+        }
+      }
+    }
 
     res.status(201).json({
       success: true,
