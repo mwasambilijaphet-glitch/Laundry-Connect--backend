@@ -129,6 +129,10 @@ app.get('/api/health', async (req, res) => {
     message: 'Laundry Connect API is running',
     db: dbStatus,
     email: !!process.env.RESEND_API_KEY ? 'Resend configured' : 'NOT SET — add RESEND_API_KEY',
+    sms: (!!process.env.NEXTSMS_USERNAME && !!process.env.NEXTSMS_PASSWORD)
+      ? 'NextSMS configured'
+      : 'NOT SET — add NEXTSMS_USERNAME & NEXTSMS_PASSWORD',
+    whatsapp_bot: process.env.WHATSAPP_BOT === 'true' ? 'enabled' : 'disabled — set WHATSAPP_BOT=true',
     snippe: !!process.env.SNIPPE_API_KEY ? 'configured' : 'test mode (payments auto-complete)',
     briq: !!process.env.BRIQ_API_KEY ? 'configured' : 'not configured',
     backend_url: process.env.BACKEND_URL || 'NOT SET — webhooks will fail',

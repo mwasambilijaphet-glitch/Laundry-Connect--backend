@@ -307,6 +307,36 @@ router.post('/balances/:shopId/invoice', async (req, res, next) => {
   }
 });
 
+// ── POST /api/admin/test-sms — Send test SMS to verify NextSMS config ──
+router.post('/test-sms', async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'Phone number required' });
+    }
+
+    const { sendSMS, formatPhone } = require('../services/nextsms');
+    const formatted = formatPhone(phone);
+    const result = await sendSMS(phone, 'Laundry Connect: SMS test successful! Your notifications are working.');
+
+    res.json({
+      success: result.success,
+      message: result.success
+        ? `Test SMS sent to ${formatted}`
+        : `SMS failed: ${result.reason || 'unknown error'}`,
+      config: {
+        nextsms_username: process.env.NEXTSMS_USERNAME ? '✓ set' : '✗ missing',
+        nextsms_password: process.env.NEXTSMS_PASSWORD ? '✓ set' : '✗ missing',
+        sender_id: process.env.NEXTSMS_SENDER_ID || 'NEXTSMS',
+        formatted_phone: formatted,
+      },
+      raw: result.data || null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── PATCH /api/admin/settings — Update platform settings ──
 router.patch('/settings', async (req, res, next) => {
   res.json({
