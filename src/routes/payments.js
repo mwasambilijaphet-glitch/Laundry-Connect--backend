@@ -94,6 +94,15 @@ router.post('/initiate', authenticate, authorize('customer', 'admin'), async (re
       return res.status(404).json({ success: false, message: 'Order not found or already paid' });
     }
     const order = orderResult.rows[0];
+    const amount = Math.round(parseFloat(order.total_amount));
+
+    // Snippe minimum is 500 TZS for electronic payments
+    if (method !== 'cash' && amount < 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum payment amount is 500 TZS for electronic payments. Please pay with cash instead.',
+      });
+    }
 
     // ── Cash payment — mark as cash, track commission owed by shop owner ──
     if (method === 'cash') {
