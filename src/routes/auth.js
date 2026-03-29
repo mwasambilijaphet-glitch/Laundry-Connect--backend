@@ -409,6 +409,14 @@ router.post('/login', async (req, res, next) => {
       return res.status(403).json({ success: false, message: req.t('verifyFirst') });
     }
 
+    // Block suspended/blocked users
+    if (user.status === 'suspended') {
+      return res.status(403).json({ success: false, message: 'Your account has been suspended. Contact support for assistance.' });
+    }
+    if (user.status === 'blocked') {
+      return res.status(403).json({ success: false, message: 'Your account has been blocked. Contact support for assistance.' });
+    }
+
     clearLoginAttempts(req.ip, phone);
 
     const token = generateToken(user);
