@@ -382,7 +382,7 @@ router.post('/balances/:shopId/invoice', async (req, res, next) => {
   }
 });
 
-// ── POST /api/admin/test-sms — Send test SMS to verify NextSMS config ──
+// ── POST /api/admin/test-sms — Send test SMS with full debug output ──
 router.post('/test-sms', async (req, res, next) => {
   try {
     const { phone } = req.body;
@@ -390,25 +390,53 @@ router.post('/test-sms', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone number required' });
     }
 
-    const { sendSMS, formatPhone } = require('../services/nextsms');
+    const { formatPhone } = require('../services/nextsms');
     const formatted = formatPhone(phone);
-    const result = await sendSMS(phone, 'Laundry Connect: SMS test successful! Your notifications are working.');
+
+    // Build the request manually so we can capture everything
+    const apiBase = process.env.NEXTSMS_API_URL || 'https://messaging-service.co.tz';
+    const username = process.env.NEXTSMS_USERNAME;
+    const password = process.env.NEXTSMS_PASSWORD;
+    const senderId = process.env.NEXTSMS_SENDER_ID || 'NEXTSMS';
+
+    if (!username || !password) {
+      return res.json({
+        success: false,
+        message: 'NEXTSMS_USERNAME or NEXTSMS_PASSWORD not set',
+        debug: { username: !!username, password: !!password },
+      });
+    }
+
+    const auth = 'Basic ' + Buffer.from(`${username}:${password}`, 'binary').toString('base64');
+    const url = `${apiBase}/api/sms/v1/text/single`;
+    const body = { from: senderId, to: formatted, text: 'Laundry Connect: SMS test successful!' };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': auth, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    let data;
+    const responseText = await response.text();
+    try { data = JSON.parse(responseText); } catch { data = responseText; }
 
     res.json({
-      success: result.success,
-      message: result.success
-        ? `Test SMS sent to ${formatted}`
-        : `SMS failed: ${result.reason || 'unknown error'}`,
-      config: {
-        nextsms_username: process.env.NEXTSMS_USERNAME ? '✓ set' : '✗ missing',
-        nextsms_password: process.env.NEXTSMS_PASSWORD ? '✓ set' : '✗ missing',
-        sender_id: process.env.NEXTSMS_SENDER_ID || 'NEXTSMS',
-        formatted_phone: formatted,
+      success: response.ok,
+      debug: {
+        url_called: url,
+        http_status: response.status,
+        http_status_text: response.statusText,
+        request_body: body,
+        response_body: data,
+        nextsms_username: username ? `${username.substring(0, 3)}***` : 'NOT SET',
+        nextsms_api_url_env: process.env.NEXTSMS_API_URL || '(using default)',
+        sender_id: senderId,
+        phone_formatted: formatted,
       },
-      raw: result.data || null,
     });
   } catch (err) {
-    next(err);
+    res.json({ success: false, error: err.message, stack: err.stack });
   }
 });
 
