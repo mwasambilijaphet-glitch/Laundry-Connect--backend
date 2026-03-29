@@ -1,11 +1,97 @@
 const express = require('express');
 const crypto = require('crypto');
+const { Resend } = require('resend');
 const pool = require('../db/pool');
 const { authenticate, authorize } = require('../middleware/auth');
 const { sendSMS } = require('../services/nextsms');
 const { getTranslator } = require('../i18n');
 
 const router = express.Router();
+
+// ── Email via Resend (for order status notifications) ──────
+const resendApiKey = process.env.RESEND_API_KEY;
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const emailFrom = process.env.EMAIL_FROM || 'Laundry Connect <info@laundryconnect.app>';
+const frontendUrl = (process.env.FRONTEND_URL || 'https://laundry-connect-frontend-s33t.vercel.app').replace(/\/+$/, '');
+
+async function sendOrderStatusEmail(email, orderNumber, shopName, status) {
+  if (!resend || !email) return;
+
+  const statusInfo = {
+    confirmed: { title: 'Order Confirmed ✅', message: 'Your order has been confirmed and the shop is preparing to collect your items.', color: '#16a34a', emoji: '✅' },
+    picked_up: { title: 'Clothes Picked Up 🚗', message: 'Your clothes have been picked up and are on the way to the laundry shop.', color: '#d97706', emoji: '🚗' },
+    washing: { title: 'Washing In Progress 🫧', message: 'Your clothes are being washed right now. Sit back and relax!', color: '#2563eb', emoji: '🫧' },
+    ready: { title: 'Clothes Ready ✨', message: 'Your clothes are clean and ready! They will be delivered soon.', color: '#16a34a', emoji: '✨' },
+    out_for_delivery: { title: 'Out for Delivery 🛵', message: 'Your clothes are on the way to you right now!', color: '#d97706', emoji: '🛵' },
+    delivered: { title: 'Order Delivered 🎉', message: 'Your clothes have been delivered. Thank you for using Laundry Connect!', color: '#16a34a', emoji: '🎉' },
+    cancelled: { title: 'Order Cancelled ❌', message: 'Your order has been cancelled. If this was unexpected, please contact the shop.', color: '#dc2626', emoji: '❌' },
+  };
+
+  const info = statusInfo[status];
+  if (!info) return;
+
+  const steps = [
+    { id: 'placed', label: '📋 New', done: false },
+    { id: 'confirmed', label: '✅ Confirmed', done: false },
+    { id: 'picked_up', label: '🚗 Picked Up', done: false },
+    { id: 'washing', label: '🫧 Washing', done: false },
+    { id: 'ready', label: '✨ Ready', done: false },
+    { id: 'out_for_delivery', label: '🛵 Delivering', done: false },
+    { id: 'delivered', label: '🎉 Delivered', done: false },
+  ];
+
+  const statusOrder = steps.map(s => s.id);
+  const currentIndex = statusOrder.indexOf(status);
+  const stepsHtml = steps.map((step, i) => {
+    const isPast = i <= currentIndex;
+    const isCurrent = i === currentIndex;
+    const bg = isCurrent ? info.color : isPast ? '#22c55e' : '#e2e8f0';
+    const textColor = isPast ? '#ffffff' : '#94a3b8';
+    return `<span style="display:inline-block;padding:6px 12px;margin:3px;border-radius:20px;font-size:12px;font-weight:600;background:${bg};color:${textColor};">${step.label}</span>`;
+  }).join('');
+
+  const trackUrl = `${frontendUrl}/order/${orderNumber}`;
+
+  try {
+    await resend.emails.send({
+      from: emailFrom,
+      to: email,
+      subject: `${info.emoji} ${info.title} — Order ${orderNumber}`,
+      html: `
+        <div style="font-family:'Segoe UI',sans-serif;max-width:500px;margin:0 auto;padding:0;">
+          <div style="background:linear-gradient(135deg,#0f172a,#1e293b);padding:24px;border-radius:16px 16px 0 0;text-align:center;">
+            <h2 style="color:#22c55e;margin:0;font-size:20px;">Laundry<span style="color:#4ade80;">Connect</span></h2>
+          </div>
+          <div style="background:#ffffff;padding:24px;border:1px solid #e2e8f0;">
+            <div style="text-align:center;margin-bottom:20px;">
+              <span style="font-size:48px;">${info.emoji}</span>
+              <h3 style="color:#1e293b;margin:8px 0 4px;">${info.title}</h3>
+              <p style="color:#64748b;font-size:14px;margin:0;">${info.message}</p>
+            </div>
+            <div style="background:#f8fafc;border-radius:12px;padding:16px;margin:16px 0;">
+              <p style="color:#64748b;font-size:12px;margin:0 0 4px;font-weight:600;">ORDER DETAILS</p>
+              <p style="color:#1e293b;font-size:14px;margin:2px 0;"><strong>Order:</strong> ${orderNumber}</p>
+              <p style="color:#1e293b;font-size:14px;margin:2px 0;"><strong>Shop:</strong> ${shopName}</p>
+            </div>
+            <div style="margin:20px 0;">
+              <p style="color:#64748b;font-size:12px;margin:0 0 8px;font-weight:600;">ORDER PROGRESS</p>
+              <div style="text-align:center;">${stepsHtml}</div>
+            </div>
+            <div style="text-align:center;margin-top:20px;">
+              <a href="${trackUrl}" style="display:inline-block;background:#7c3aed;color:#ffffff;padding:12px 32px;border-radius:12px;font-weight:bold;font-size:14px;text-decoration:none;">Track Your Order</a>
+            </div>
+          </div>
+          <div style="background:#f8fafc;padding:16px;border-radius:0 0 16px 16px;text-align:center;border:1px solid #e2e8f0;border-top:0;">
+            <p style="color:#94a3b8;font-size:11px;margin:0;">Laundry Connect — Tanzania's #1 Laundry Marketplace</p>
+          </div>
+        </div>
+      `,
+    });
+    console.log('Order status email sent to:', email, '| Status:', status);
+  } catch (err) {
+    console.error('Failed to send order status email:', err.message);
+  }
+}
 
 function generateOrderNumber() {
   const year = new Date().getFullYear();
@@ -289,13 +375,19 @@ router.patch('/:id/status', authenticate, authorize('owner', 'admin'), async (re
       console.error('Failed to create notification:', notifErr);
     }
 
-    // Send SMS notification to customer (fire and forget)
+    // Send SMS + Email notifications to customer (fire and forget)
     try {
-      const customer = await pool.query('SELECT phone FROM users WHERE id = $1', [order.customer_id]);
+      const customer = await pool.query('SELECT phone, email FROM users WHERE id = $1', [order.customer_id]);
       const shop = await pool.query('SELECT name, phone FROM shops WHERE id = $1', [order.shop_id]);
       const customerPhone = customer.rows[0]?.phone;
+      const customerEmail = customer.rows[0]?.email;
       const shopName = shop.rows[0]?.name || 'Shop';
       const shopPhone = shop.rows[0]?.phone || '';
+
+      // Send email notification (fire and forget)
+      if (customerEmail) {
+        sendOrderStatusEmail(customerEmail, order.order_number, shopName, status);
+      }
 
       if (customerPhone) {
         const t = getTranslator('sw');
